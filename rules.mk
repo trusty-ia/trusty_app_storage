@@ -32,6 +32,7 @@ MODULE_SRCS := \
 	$(LOCAL_DIR)/proxy.c \
 	$(LOCAL_DIR)/rpmb.c \
 	$(LOCAL_DIR)/super.c \
+	$(LOCAL_DIR)/tipc_ns.c \
 	$(LOCAL_DIR)/transaction.c \
 
 MODULE_DEPS := \
