@@ -14,26 +14,10 @@
  * limitations under the License.
  */
 
-#pragma once
+#include <trusty_ipc.h>
+#include <trusty_uuid.h>
 
-#include <trusty_std.h>
-
-#include "crypt.h"
 #include "ipc.h"
 
-#define STORAGE_SESSION_MAGIC 0x53535343 // SSSC (Secure Storage Session Context)
-
-/**
- * storage_proxy_session
- * @magic:        a sentinel value used for checking for data corruption.
- *                Initialized to STORAGE_SESSION_MAGIC.
- * @key:          storage encryption key
- * @proxy_ctx:    the context object on the proxy channel
- */
-struct storage_session {
-	uint32_t magic;
-	struct key key;
-
-	struct ipc_channel_context proxy_ctx;
-};
-
+struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
+                                          const uuid_t *peer_uuid, handle_t chan_handle);

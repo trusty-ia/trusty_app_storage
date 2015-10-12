@@ -29,12 +29,15 @@ MODULE_SRCS := \
 	$(LOCAL_DIR)/ipc.c \
 	$(LOCAL_DIR)/main.c \
 	$(LOCAL_DIR)/manifest.c \
+	$(LOCAL_DIR)/proxy.c \
 	$(LOCAL_DIR)/rpmb.c \
 	$(LOCAL_DIR)/super.c \
 	$(LOCAL_DIR)/transaction.c \
 
 MODULE_DEPS := \
 	app/trusty \
+	interface/storage \
+	lib/hwkey \
 	lib/libc-trusty \
 	openssl \
 
