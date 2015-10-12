@@ -26,6 +26,7 @@ MODULE_SRCS := \
 	$(LOCAL_DIR)/block_tree.c \
 	$(LOCAL_DIR)/crypt.c \
 	$(LOCAL_DIR)/file.c \
+	$(LOCAL_DIR)/ipc.c \
 	$(LOCAL_DIR)/main.c \
 	$(LOCAL_DIR)/manifest.c \
 	$(LOCAL_DIR)/rpmb.c \
