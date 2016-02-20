@@ -120,12 +120,20 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 		goto err_get_rpmb_key;
 	}
 
+	rc = block_device_tipc_init(&session->block_device, chan_handle,
+	                            &session->key, &rpmb_key);
+	if (rc < 0) {
+		SS_ERR("%s: block_device_tipc_init failed (%d)\n", __func__, rc);
+		goto err_init_block_device;
+	}
+
 	session->proxy_ctx.ops.on_disconnect = proxy_disconnect;
 
 	hwkey_close(hwkey_session);
 
 	return &session->proxy_ctx;
 
+err_init_block_device:
 err_get_rpmb_key:
 err_get_storage_key:
 	hwkey_close(hwkey_session);
@@ -138,6 +146,8 @@ err_alloc_session:
 void proxy_disconnect(struct ipc_channel_context *ctx)
 {
 	struct storage_session *session = proxy_context_to_session(ctx);
+
+	block_device_tipc_uninit(&session->block_device);
 
 	free(session);
 }

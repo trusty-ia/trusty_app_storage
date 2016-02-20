@@ -18,6 +18,7 @@
 
 #include <trusty_std.h>
 
+#include "block_device_tipc.h"
 #include "crypt.h"
 #include "ipc.h"
 
@@ -27,11 +28,13 @@
  * storage_proxy_session
  * @magic:        a sentinel value used for checking for data corruption.
  *                Initialized to STORAGE_SESSION_MAGIC.
+ * @block_device: the file system state
  * @key:          storage encryption key
  * @proxy_ctx:    the context object on the proxy channel
  */
 struct storage_session {
 	uint32_t magic;
+	struct block_device_tipc block_device;
 	struct key key;
 
 	struct ipc_channel_context proxy_ctx;

@@ -14,11 +14,7 @@
  * limitations under the License.
  */
 
-#include <stdint.h>
-
-#include <trusty_ipc.h>
-
 #include "ipc.h"
 
-struct ipc_channel_context *client_connect(struct ipc_port_context *parent_ctx,
-                                           const uuid_t *peer_uuid, handle_t chan_handle);
+int client_create_port(struct ipc_port_context *client_ctx,
+                       const char *port_name);

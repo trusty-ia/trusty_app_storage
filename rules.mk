@@ -20,6 +20,7 @@ MODULE := $(LOCAL_DIR)
 MODULE_SRCS := \
 	$(LOCAL_DIR)/block_allocator.c \
 	$(LOCAL_DIR)/block_cache.c \
+	$(LOCAL_DIR)/block_device_tipc.c \
 	$(LOCAL_DIR)/block_mac.c \
 	$(LOCAL_DIR)/block_map.c \
 	$(LOCAL_DIR)/block_set.c \

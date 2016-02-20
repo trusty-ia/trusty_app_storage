@@ -19,6 +19,7 @@
 #include <stdint.h>
 
 #include "ipc.h"
+#include "transaction.h"
 
 #define STORAGE_CLIENT_SESSION_MAGIC 0x53435343 // SCSC (Storage Client Session Context)
 
@@ -29,6 +30,7 @@ struct file_handle;
  */
 struct storage_client_session {
 	uint32_t magic;
+	struct transaction tr;
 	uuid_t uuid;
 	struct file_handle **files;
 	size_t files_count;

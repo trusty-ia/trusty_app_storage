@@ -160,6 +160,7 @@ static void session_close_all_files(struct storage_client_session *session)
 	for (f_handle = 0; f_handle < session->files_count; f_handle++) {
 		file = session->files[f_handle];
 		if (file) {
+			file_close(file);
 			free(file);
 		}
 	}
@@ -239,6 +240,7 @@ static enum storage_err storage_file_delete(struct storage_msg *msg,
                                             struct storage_file_delete_req *req, size_t req_size,
                                             struct storage_client_session *session)
 {
+	bool deleted;
 	enum storage_err result;
 	const char *fname;
 	size_t fname_len;
@@ -271,7 +273,25 @@ static enum storage_err storage_file_delete(struct storage_msg *msg,
 
 	SS_INFO("%s: path %s\n", __func__, path_buf);
 
-	return STORAGE_ERR_UNIMPLEMENTED;
+	deleted = file_delete(&session->tr, path_buf);
+
+	if (session->tr.failed) {
+		SS_ERR("%s: transaction failed\n", __func__);
+		return STORAGE_ERR_GENERIC;
+	} else if (!deleted) {
+		return STORAGE_ERR_NOT_FOUND;
+	}
+
+	if (msg->flags & STORAGE_MSG_FLAG_TRANSACT_COMPLETE) {
+		transaction_complete(&session->tr);
+		if (session->tr.failed) {
+			SS_ERR("%s: transaction commit failed\n", __func__);
+			return STORAGE_ERR_GENERIC;
+		}
+		return STORAGE_NO_ERROR;
+	}
+
+	return STORAGE_NO_ERROR;
 }
 
 static int storage_file_open(struct storage_msg *msg,
@@ -279,6 +299,7 @@ static int storage_file_open(struct storage_msg *msg,
                              struct storage_client_session *session)
 
 {
+	bool found;
 	enum storage_err result;
 	struct file_handle *file = NULL;
 	const char *fname;
@@ -287,6 +308,7 @@ static int storage_file_open(struct storage_msg *msg,
 	char path_buf[FS_PATH_MAX];
 	void *out = NULL;
 	size_t out_size = 0;
+	enum file_create_mode file_create_mode;
 
 	if (req_size < sizeof(*req)) {
 		SS_ERR("%s: invalid request size (%zd)\n", __func__, req_size);
@@ -323,8 +345,47 @@ static int storage_file_open(struct storage_msg *msg,
 	if (result != STORAGE_NO_ERROR)
 		goto err_create_file_handle;
 
-	result = STORAGE_ERR_UNIMPLEMENTED;
-	goto err_open_file;
+	if (flags & STORAGE_FILE_OPEN_CREATE) {
+		if (flags & STORAGE_FILE_OPEN_CREATE_EXCLUSIVE) {
+			file_create_mode = FILE_OPEN_CREATE_EXCLUSIVE;
+		} else {
+			file_create_mode = FILE_OPEN_CREATE;
+		}
+	} else {
+		file_create_mode = FILE_OPEN_NO_CREATE;
+	}
+
+	found = file_open(&session->tr, path_buf, file, file_create_mode);
+	if (!found) {
+		/* TODO: get more accurate error code from file_open */
+		if (session->tr.failed) {
+			result = STORAGE_ERR_GENERIC;
+		} else if (flags & STORAGE_FILE_OPEN_CREATE) {
+			result = STORAGE_ERR_EXIST;
+		} else {
+			result = STORAGE_ERR_NOT_FOUND;
+		}
+		goto err_open_file;
+	}
+
+	if ((flags & STORAGE_FILE_OPEN_TRUNCATE) && file->size) {
+		file_set_size(&session->tr, file, 0);
+	}
+
+	if (session->tr.failed) {
+		SS_ERR("%s: transaction failed\n", __func__);
+		result = STORAGE_ERR_GENERIC;
+		goto err_transaction_failed;
+	}
+
+	if (msg->flags & STORAGE_MSG_FLAG_TRANSACT_COMPLETE) {
+		transaction_complete(&session->tr);
+		if (session->tr.failed) {
+			SS_ERR("%s: transaction commit failed\n", __func__);
+			result = STORAGE_ERR_GENERIC;
+			goto err_transaction_failed;
+		}
+	}
 
 	struct storage_file_open_resp resp = { .handle = f_handle };
 
@@ -334,6 +395,8 @@ static int storage_file_open(struct storage_msg *msg,
 	result = STORAGE_NO_ERROR;
 	goto done;
 
+err_transaction_failed:
+	file_close(file);
 err_open_file:
 	free_file_handle(session, f_handle);
 err_create_file_handle:
@@ -360,7 +423,18 @@ static enum storage_err storage_file_close(struct storage_msg *msg,
 	if (!file)
 		return STORAGE_ERR_NOT_VALID;
 
+	file_close(file);
+
 	free_file_handle(session, req->handle);
+
+	if (msg->flags & STORAGE_MSG_FLAG_TRANSACT_COMPLETE) {
+		transaction_complete(&session->tr);
+		if (session->tr.failed) {
+			SS_ERR("%s: transaction commit failed\n", __func__);
+			return STORAGE_ERR_GENERIC;
+		}
+		return STORAGE_NO_ERROR;
+	}
 
 	return STORAGE_NO_ERROR;
 }
@@ -377,6 +451,11 @@ static int storage_file_read(struct storage_msg *msg,
 	struct file_handle *file;
 	void *out = NULL;
 	size_t out_size = 0;
+	size_t block_size = get_file_block_size(session->tr.fs);
+	data_block_t block_num;
+	const uint8_t *block_data;
+	obj_ref_t block_data_ref = OBJ_REF_INITIAL_VALUE(block_data_ref);
+	size_t block_offset;
 
 	if (req_size < sizeof(*req)) {
 		SS_ERR("%s: invalid request size (%zd)\n", __func__, req_size);
@@ -420,9 +499,23 @@ static int storage_file_read(struct storage_msg *msg,
 
 	SS_INFO("%s: start 0x%x cnt %d\n", __func__, offset, bytes_left);
 
+	result = STORAGE_NO_ERROR;
 	while (bytes_left) {
-		result = STORAGE_ERR_UNIMPLEMENTED;
-		goto err_get_block;
+		block_num = offset / block_size;
+		block_data = file_get_block(&session->tr, file, block_num,
+		                            &block_data_ref);
+		if (!block_data) {
+			SS_ERR("error reading block %lld\n", block_num);
+			result = STORAGE_ERR_GENERIC;
+			goto err_get_block;
+		}
+
+		block_offset = offset % block_size;
+		len = (block_offset + bytes_left > block_size) ?
+		      block_size - block_offset : bytes_left;
+
+		memcpy(bufp, block_data + block_offset, len);
+		file_block_put(block_data, &block_data_ref);
 
 		bytes_left -= len;
 		offset += len;
@@ -447,6 +540,11 @@ static enum storage_err storage_file_write(struct storage_msg *msg,
 	uint64_t offset, end_offset, bytes_left;
 	size_t len;
 	struct file_handle *file;
+	size_t block_size = get_file_block_size(session->tr.fs);
+	data_block_t block_num;
+	uint8_t *block_data;
+	obj_ref_t block_data_ref = OBJ_REF_INITIAL_VALUE(block_data_ref);
+	size_t block_offset;
 
 	if (req_size <= sizeof(*req)) {
 		SS_ERR("%s: invalid request size (%zd)\n", __func__, req_size);
@@ -459,7 +557,6 @@ static enum storage_err storage_file_write(struct storage_msg *msg,
 		return STORAGE_ERR_NOT_VALID;
 	}
 
-        /* TODO: check file size */
 	offset = req->offset;
 	if (offset > file->size) {
 		SS_ERR("%s: can't start writing past end of file (%lld > %lld) \n",
@@ -475,8 +572,22 @@ static enum storage_err storage_file_write(struct storage_msg *msg,
 
 	/* transfer data one ss block at a time */
 	while (bytes_left) {
-		result = STORAGE_ERR_UNIMPLEMENTED;
-		goto err_write;
+		block_num = offset / block_size;
+		block_offset = offset % block_size;
+		len = (block_offset + bytes_left > block_size) ?
+		      block_size - block_offset : bytes_left;
+
+		block_data = file_get_block_write(&session->tr, file, block_num,
+		                                  len != block_size, &block_data_ref);
+		if (!block_data) {
+			SS_ERR("error getting block %lld\n", block_num);
+			result = STORAGE_ERR_GENERIC;
+			goto err_write;
+		}
+
+		memcpy(block_data + block_offset, bufp, len);
+		file_block_put_dirty(&session->tr, file, block_num,
+		                     block_data, &block_data_ref);
 
 		SS_INFO("%s: bufp %p offset 0x%llx len 0x%x\n",
 			__func__, bufp, offset, len);
@@ -486,9 +597,30 @@ static enum storage_err storage_file_write(struct storage_msg *msg,
 		bufp += len;
 	}
 
+	if (offset > file->size) {
+		file_set_size(&session->tr, file, offset);
+	}
+
+	if (session->tr.failed) {
+		SS_ERR("%s: transaction failed\n", __func__);
+		return STORAGE_ERR_GENERIC;
+	}
+
+	if (msg->flags & STORAGE_MSG_FLAG_TRANSACT_COMPLETE) {
+		transaction_complete(&session->tr);
+		if (session->tr.failed) {
+			SS_ERR("%s: transaction commit failed\n", __func__);
+			return STORAGE_ERR_GENERIC;
+		}
+	}
+
 	return STORAGE_NO_ERROR;
 
 err_write:
+	if (!session->tr.failed) {
+		transaction_fail(&session->tr);
+	}
+err_transaction_complete:
 	return result;
 }
 
@@ -558,7 +690,19 @@ static enum storage_err storage_file_set_size(struct storage_msg *msg,
 	}
 
 	/* update size */
-	return STORAGE_ERR_UNIMPLEMENTED;
+	file_set_size(&session->tr, file, new_size);
+
+	/* try to commit */
+	if (msg->flags & STORAGE_MSG_FLAG_TRANSACT_COMPLETE) {
+		transaction_complete(&session->tr);
+	}
+
+	if (session->tr.failed) {
+		SS_ERR("%s: transaction failed\n", __func__);
+		return STORAGE_ERR_GENERIC;
+	}
+
+	return STORAGE_NO_ERROR;
 }
 
 static struct storage_client_session *chan_context_to_client_session(struct ipc_channel_context *ctx)
@@ -571,16 +715,27 @@ static struct storage_client_session *chan_context_to_client_session(struct ipc_
 	return session;
 }
 
+static struct client_port_context *port_context_to_client_port_context(struct ipc_port_context *context)
+{
+	assert(context != NULL);
+
+	return containerof(context, struct client_port_context, client_ctx);
+}
+
 static void client_channel_ops_init(struct ipc_channel_ops *ops)
 {
 	ops->on_handle_msg = client_handle_msg;
 	ops->on_disconnect = client_disconnect;
 }
 
-struct ipc_channel_context *client_connect(struct ipc_port_context *parent_ctx,
-                                           const uuid_t *peer_uuid, handle_t chan_handle)
+static struct ipc_channel_context *client_connect(struct ipc_port_context *parent_ctx,
+                                                  const uuid_t *peer_uuid,
+                                                  handle_t chan_handle)
 {
+	struct client_port_context *client_port_context;
 	struct storage_client_session *client_session;
+
+	client_port_context = port_context_to_client_port_context(parent_ctx);
 
 	client_session = calloc(1, sizeof(*client_session));
 	if (client_session == NULL) {
@@ -592,6 +747,9 @@ struct ipc_channel_context *client_connect(struct ipc_port_context *parent_ctx,
 
 	client_session->files = NULL;
 	client_session->files_count = 0;
+
+	transaction_init(&client_session->tr, client_port_context->tr_state,
+	                 false);
 
 	/* cache identity information */
 	memcpy(&client_session->uuid, peer_uuid, sizeof(*peer_uuid));
@@ -610,7 +768,12 @@ static void client_disconnect(struct ipc_channel_context *context)
 	struct storage_client_session *session;
 
 	session = chan_context_to_client_session(context);
+
+	if (list_in_list(&session->tr.allocated.node) && !session->tr.failed) {
+		transaction_fail(&session->tr); /* discard partial transaction */
+	}
 	session_close_all_files(session);
+	transaction_free(&session->tr);
 
 	OPENSSL_cleanse(session, sizeof(struct storage_client_session));
 	free(session);
@@ -671,13 +834,46 @@ static int client_handle_msg(struct ipc_channel_context *ctx, void *msg_buf, siz
 		return ERR_NOT_VALID; /* would force to close connection */
 	}
 
-	if (msg->flags != 0) {
-		SS_ERR("%s: invalid storage_msg flags 0x%x\n", __func__, msg->flags);
-		return send_result(session, msg, STORAGE_ERR_NOT_VALID);
-	}
-
 	payload_len = msg_size - sizeof(struct storage_msg);
 	payload = msg->payload;
+
+	/* abort transaction and clear sticky transaction error */
+	if (msg->cmd == STORAGE_END_TRANSACTION) {
+		if (msg->flags & STORAGE_MSG_FLAG_TRANSACT_COMPLETE) {
+			/* try to complete current transaction */
+			if (transaction_is_active(&session->tr)) {
+				transaction_complete(&session->tr);
+			}
+			if (session->tr.failed) {
+				SS_ERR("%s: failed to complete transaction\n", __func__);
+				/* clear transaction failed state */
+				session->tr.failed = false;
+				return send_result(session, msg, STORAGE_ERR_TRANSACT);
+			}
+			return send_result(session, msg, STORAGE_NO_ERROR);
+		} else {
+			/* discard current transaction */
+			if (transaction_is_active(&session->tr)) {
+				transaction_fail(&session->tr);
+			}
+			/* clear transaction failed state */
+			session->tr.failed = false;
+			return send_result(session, msg, STORAGE_NO_ERROR);
+		}
+	}
+
+	if (session->tr.failed) {
+		if (msg->flags & STORAGE_MSG_FLAG_TRANSACT_COMPLETE) {
+			/* last command in current trunsaction: reset failed state and return error */
+			session->tr.failed = false;
+		}
+		return send_result(session, msg, STORAGE_ERR_TRANSACT);
+	}
+
+	if (!transaction_is_active(&session->tr)) {
+		/* previous transaction complete */
+		transaction_activate(&session->tr);
+	}
 
 	switch (msg->cmd) {
 	case STORAGE_FILE_DELETE:
@@ -707,3 +903,20 @@ static int client_handle_msg(struct ipc_channel_context *ctx, void *msg_buf, siz
 	return send_result(session, msg, result);
 }
 
+int client_create_port(struct ipc_port_context *client_ctx,
+                       const char *port_name)
+{
+	int ret;
+
+	/* start accepting client connections */
+	client_ctx->ops.on_connect = client_connect;
+	ret = ipc_port_create(client_ctx, port_name,
+	                      1, STORAGE_MAX_BUFFER_SIZE,
+	                      IPC_PORT_ALLOW_NS_CONNECT | IPC_PORT_ALLOW_TA_CONNECT);
+	if (ret < 0) {
+		SS_ERR("%s: failure initializing client port (%d)\n", __func__,
+		       ret);
+		return ret;
+	}
+	return 0;
+}

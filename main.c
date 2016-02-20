@@ -18,6 +18,7 @@
 
 #include <interface/storage/storage.h>
 
+#include "block_cache.h"
 #include "ipc.h"
 #include "proxy.h"
 #include "tipc_limits.h"
@@ -31,6 +32,8 @@ int main(void)
 			.on_connect = proxy_connect,
 		}
 	};
+
+	block_cache_init();
 
 	int rc = ipc_port_create(&ctx, STORAGE_DISK_PROXY_PORT, 1, STORAGE_MAX_BUFFER_SIZE,
 				 IPC_PORT_ALLOW_TA_CONNECT | IPC_PORT_ALLOW_NS_CONNECT);
