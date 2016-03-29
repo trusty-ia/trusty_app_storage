@@ -36,4 +36,7 @@ MODULE_DEPS := \
 	lib/libc-trusty \
 	openssl \
 
+MODULE_DEPS += \
+	app/storage/test \
+
 include make/module.mk
