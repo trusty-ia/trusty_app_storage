@@ -18,11 +18,13 @@ LOCAL_DIR := $(GET_LOCAL_DIR)
 MODULE := $(LOCAL_DIR)
 
 MODULE_SRCS := \
+	$(LOCAL_DIR)/crypt.c \
 	$(LOCAL_DIR)/main.c \
 	$(LOCAL_DIR)/manifest.c \
 
 MODULE_DEPS := \
 	app/trusty \
 	lib/libc-trusty \
+	openssl \
 
 include make/module.mk
