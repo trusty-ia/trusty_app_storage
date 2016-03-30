@@ -24,6 +24,7 @@ MODULE_SRCS := \
 	$(LOCAL_DIR)/block_map.c \
 	$(LOCAL_DIR)/block_set.c \
 	$(LOCAL_DIR)/block_tree.c \
+	$(LOCAL_DIR)/client_tipc.c \
 	$(LOCAL_DIR)/crypt.c \
 	$(LOCAL_DIR)/file.c \
 	$(LOCAL_DIR)/ipc.c \

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 The Android Open Source Project
+ * Copyright (C) 2015-2016 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,32 @@
 
 #include <trusty_std.h>
 
+#include <interface/storage/storage.h>
+
+#include "ipc.h"
+#include "proxy.h"
+#include "tipc_limits.h"
+
+#define SS_ERR(args...)		fprintf(stderr, "ss: " args)
+
 int main(void)
 {
-    return 0;
+	struct ipc_port_context ctx = {
+		.ops = {
+			.on_connect = proxy_connect,
+		}
+	};
+
+	int rc = ipc_port_create(&ctx, STORAGE_DISK_PROXY_PORT, 1, STORAGE_MAX_BUFFER_SIZE,
+				 IPC_PORT_ALLOW_TA_CONNECT | IPC_PORT_ALLOW_NS_CONNECT);
+
+	if (rc < 0) {
+		SS_ERR("fatal: unable to initialize proxy endpoint (%d)\n", rc);
+		return rc;
+	}
+
+	ipc_loop();
+
+	ipc_port_destroy(&ctx);
+	return 0;
 }
