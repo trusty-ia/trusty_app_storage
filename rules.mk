@@ -28,6 +28,7 @@ MODULE_SRCS := \
 	$(LOCAL_DIR)/file.c \
 	$(LOCAL_DIR)/main.c \
 	$(LOCAL_DIR)/manifest.c \
+	$(LOCAL_DIR)/rpmb.c \
 	$(LOCAL_DIR)/super.c \
 	$(LOCAL_DIR)/transaction.c \
 
