@@ -78,4 +78,5 @@ void update_super_block(struct transaction *tr,
 int fs_init(struct fs *fs,
             const struct key *key,
             struct block_device *dev,
-            struct block_device *super_dev);
+            struct block_device *super_dev,
+            bool clear);

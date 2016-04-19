@@ -251,20 +251,25 @@ static void fs_init_empty(struct fs *fs)
  * fs_init_from_super - Initialize file system from super block
  * @fs:         File system state object.
  * @super:      Superblock data, or %NULL.
+ * @clear:      If %true, clear fs state if allowed by super block state.
  *
  * Return: 0 if super block was usable, -1 if not.
  */
 static int fs_init_from_super(struct fs *fs,
-                              const struct super_block *super)
+                              const struct super_block *super,
+                              bool clear)
 {
     size_t block_mac_size;
 
-    if (super) {
-        if (super->fs_version > SUPER_BLOCK_FS_VERSION) {
-            pr_err("ERROR: super block is from the future 0x%x\n",
-                   super->fs_version);
-            return -1;
-        }
+    if (super && super->fs_version > SUPER_BLOCK_FS_VERSION) {
+        pr_err("ERROR: super block is from the future 0x%x\n",
+               super->fs_version);
+        return -1;
+    }
+    if (clear) {
+        super = NULL;
+    }
+    if(super) {
         fs->block_num_size = super->block_num_size;
         fs->mac_size = super->mac_size;
     } else {
@@ -286,7 +291,11 @@ static int fs_init_from_super(struct fs *fs,
                                      SUPER_BLOCK_FLAGS_VERSION_MASK;
         pr_init("loaded super block version %d\n", fs->super_block_version);
     } else {
-        pr_init("no valid super-block found, create empty\n");
+        if (clear) {
+            pr_init("clear requested, create empty\n");
+        } else {
+            pr_init("no valid super-block found, create empty\n");
+        }
         fs_init_empty(fs);
     }
     assert(fs->block_num_size >= fs->dev->block_num_size);
@@ -301,11 +310,12 @@ static int fs_init_from_super(struct fs *fs,
 /**
  * load_super_block - Find and load superblock and initialize file system state
  * @fs:         File system state object.
+ * @clear:      If %true, clear fs state if allowed by super block state.
  *
  * Return: 0 if super block was readable and not from a future file system
  * version (regardless of its other content), -1 if not.
  */
-static int load_super_block(struct fs *fs)
+static int load_super_block(struct fs *fs, bool clear)
 {
     uint i;
     int ret;
@@ -335,7 +345,7 @@ static int load_super_block(struct fs *fs)
         }
     }
 
-    ret = fs_init_from_super(fs, old_super);
+    ret = fs_init_from_super(fs, old_super, clear);
 err:
     if (old_super) {
         block_put(old_super, &old_super_ref);
@@ -349,11 +359,13 @@ err:
  * @key:        Key pointer. Must not be freed while @fs is in use.
  * @dev:        Main block device.
  * @super_dev:  Block device for super block.
+ * @clear:      If %true, clear fs state if allowed by super block state.
  */
 int fs_init(struct fs *fs,
             const struct key *key,
             struct block_device *dev,
-            struct block_device *super_dev)
+            struct block_device *super_dev,
+            bool clear)
 {
     int ret;
 
@@ -382,7 +394,7 @@ int fs_init(struct fs *fs,
     }
     fs->super_block[0] = 0;
     fs->super_block[1] = 1;
-    ret = load_super_block(fs);
+    ret = load_super_block(fs, clear);
     if (ret) {
         fs->dev = NULL;
         fs->super_dev = NULL;

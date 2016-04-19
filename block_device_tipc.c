@@ -197,6 +197,8 @@ int block_device_tipc_init(struct block_device_tipc *state,
                            const struct rpmb_key *rpmb_key)
 {
     int ret;
+    bool new_ns_fs;
+    uint8_t dummy;
     uint32_t rpmb_block_count;
     uint32_t rpmb_part1_block_count = 2;
     uint16_t rpmb_part1_base = 1; /* TODO: change to 0 and overwrite old fs */
@@ -223,7 +225,7 @@ int block_device_tipc_init(struct block_device_tipc *state,
 
     /* TODO: allow non-rpmb based tamper proof storage */
     ret = fs_init(&state->tr_state_rpmb, fs_key,
-                  &state->dev_rpmb.dev, &state->dev_rpmb.dev);
+                  &state->dev_rpmb.dev, &state->dev_rpmb.dev, false);
     if (ret < 0) {
         goto err_init_tr_state_rpmb;
     }
@@ -260,13 +262,18 @@ int block_device_tipc_init(struct block_device_tipc *state,
         return 0;
     }
 
+    /* Request empty file system if file is empty */
+    ret = ns_read_pos(state->ipc_handle, state->ns_handle, 0,
+                      &dummy, sizeof(dummy));
+    new_ns_fs = ret < (int)sizeof(dummy);
+
     state->fs_ns.tr_state = &state->tr_state_ns;
 
     block_device_tipc_init_dev_rpmb(&state->dev_ns_rpmb, state,
                                     rpmb_part1_base, rpmb_part1_block_count);
 
     ret = fs_init(&state->tr_state_ns, fs_key,
-                  &state->dev_ns, &state->dev_ns_rpmb.dev);
+                  &state->dev_ns, &state->dev_ns_rpmb.dev, new_ns_fs);
     if (ret < 0) {
         goto err_init_fs_ns_tr_state;
     }

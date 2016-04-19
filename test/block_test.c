@@ -1501,7 +1501,10 @@ static void future_fs_version_test(struct transaction *tr)
 
     transaction_free(tr);
 
-    ret = fs_init(fs, key, dev, super_dev);
+    ret = fs_init(fs, key, dev, super_dev, false);
+    assert(ret == -1);
+
+    ret = fs_init(fs, key, dev, super_dev, true);
     assert(ret == -1);
 
     fs->dev = dev;
@@ -1516,7 +1519,7 @@ static void future_fs_version_test(struct transaction *tr)
     block_cache_clean_transaction(tr);
     transaction_free(tr);
 
-    ret = fs_init(fs, key, dev, super_dev);
+    ret = fs_init(fs, key, dev, super_dev, false);
     assert(ret == 0);
 
     transaction_init(tr, fs, true);
@@ -1679,7 +1682,7 @@ int main(int argc, const char *argv[])
     block_tree_check_config_done();
     block_cache_init();
 
-    fs_init(&fs, &key, &dev, &dev);
+    fs_init(&fs, &key, &dev, &dev, true);
     transaction_init(&tr, &fs, false);
 
     for (i = 0; i < countof(tests); i++) {
@@ -1699,7 +1702,7 @@ int main(int argc, const char *argv[])
         assert(!tr.failed);
         if (test_remount) {
             transaction_free(&tr);
-            fs_init(&fs, &key, &dev, &dev);
+            fs_init(&fs, &key, &dev, &dev, false);
             transaction_init(&tr, &fs, false);
         }
     }
