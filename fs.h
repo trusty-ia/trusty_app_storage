@@ -53,6 +53,8 @@
  * @block_num_size:                 Number of bytes used to store block numbers.
  * @mac_size:                       Number of bytes used to store mac values.
  *                                  Must be 16 if @dev is not tamper_detecting.
+ * @reserved_count:                 Number of free blocks reserved for active
+ *                                  transactions.
  */
 
 struct fs {
@@ -69,6 +71,7 @@ struct fs {
     data_block_t min_block_num;
     size_t block_num_size;
     size_t mac_size;
+    data_block_t reserved_count;
 };
 
 void update_super_block(struct transaction *tr,

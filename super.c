@@ -284,6 +284,10 @@ static int fs_init_from_super(struct fs *fs,
                     block_mac_size, block_mac_size);
     fs->files.copy_on_write = true;
     fs->files.allow_copy_on_write = true;
+
+    /* Reserve 1/4 for tmp blocks plus half of the remaining space */
+    fs->reserved_count = fs->dev->block_count / 8 * 5;
+
     if (super) {
         fs->free.block_tree.root = super->free;
         fs->files.root = super->files;

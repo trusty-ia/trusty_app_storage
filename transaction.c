@@ -243,7 +243,7 @@ void transaction_complete(struct transaction *tr)
     tr->new_free_set = &new_free_set;
     transaction_merge_free_sets(tr, &new_free_set, &tr->fs->free, &tr->allocated, &tr->freed);
 
-    if (!transaction_check_free(tr, &new_free_set, 18)) { /* TODO:reserve more space */
+    if (!transaction_check_free(tr, &new_free_set, tr->fs->reserved_count)) {
         transaction_fail(tr);
         printf("%s: transaction would leave fs too full, abort\n", __func__);
         goto err_transaction_failed;
