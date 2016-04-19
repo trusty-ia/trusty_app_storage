@@ -1683,6 +1683,7 @@ int main(int argc, const char *argv[])
     block_cache_init();
 
     fs_init(&fs, &key, &dev, &dev, true);
+    fs.reserved_count = 18; /* HACK: override default reserved space */
     transaction_init(&tr, &fs, false);
 
     for (i = 0; i < countof(tests); i++) {
@@ -1703,6 +1704,7 @@ int main(int argc, const char *argv[])
         if (test_remount) {
             transaction_free(&tr);
             fs_init(&fs, &key, &dev, &dev, false);
+            fs.reserved_count = 18; /* HACK: override default reserved space */
             transaction_init(&tr, &fs, false);
         }
     }
