@@ -58,7 +58,7 @@
 struct fs {
     struct block_device *dev;
     struct list_node transactions;
-    struct list_node allocated; /* list of block sets containing block allocated by active transactions */
+    struct list_node allocated;
     struct block_set free;
     struct block_tree files;
     struct block_device *super_dev;
