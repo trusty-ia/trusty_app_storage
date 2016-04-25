@@ -361,7 +361,7 @@ static const void *file_get_block_etc(struct transaction *tr,
 err:
     if (dirty) {
         block_put_dirty_discard((void *)data, ref);
-    } else if (found) {
+    } else if (data) {
         block_put(data, ref);
     }
     pr_err("transaction failed, abort\n");
