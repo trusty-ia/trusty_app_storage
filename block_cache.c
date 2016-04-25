@@ -350,6 +350,22 @@ static void block_cache_entry_clean(struct block_cache_entry *entry)
 }
 
 /**
+ * block_cache_entry_score - Get a keep score
+ * @entry:      Block cache entry to check
+ * @index:      Number of available entries before @entry in lru.
+ *
+ * Return: A score value indicating in what order entries that are close in the
+ * lru should be replaced.
+ */
+static uint block_cache_entry_score(struct block_cache_entry *entry, uint index)
+{
+    if (!entry->dev) {
+        return ~0;
+    }
+    return (entry->dirty ? (entry->dirty_tmp ? 1 : 2) : 4) * index;
+}
+
+/**
  * block_cache_lookup - Get cache entry for a specific block
  * @fs:         File system state object, or %NULL is @allocate is %false.
  * @dev:        Block device object.
@@ -369,6 +385,8 @@ static struct block_cache_entry *block_cache_lookup(struct fs *fs,
 {
     struct block_cache_entry *entry;
     struct block_cache_entry *unused_entry = NULL;
+    uint unused_entry_score = 0;
+    uint score;
     uint available = 0;
     uint in_use = 0;
 
@@ -390,8 +408,12 @@ static struct block_cache_entry *block_cache_lookup(struct fs *fs,
             goto done;
         }
         if (!block_cache_entry_has_refs(entry)) {
+            score = block_cache_entry_score(entry, available);
             available++;
-            unused_entry = entry;
+            if (score >= unused_entry_score) {
+                unused_entry = entry;
+                unused_entry_score = score;
+            }
             if (print_cache_lookup_verbose) {
                 printf("%s: block %lld, cache entry %zd available last used for %lld\n",
                        __func__, block, entry - block_cache_entries, entry->block);
