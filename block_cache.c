@@ -26,12 +26,10 @@
 #include <openssl/rand.h>
 
 #include "block_cache.h"
+#include "block_cache_priv.h"
 #include "crypt.h"
 #include "debug_stats.h"
 #include "transaction.h"
-
-#define BLOCK_CACHE_SIZE 16
-#define MAX_BLOCK_SIZE 2048
 
 static bool print_cache_lookup = false;
 static bool print_cache_lookup_verbose = false;
@@ -46,64 +44,6 @@ static bool print_cache_get_ref_block_count = true;
 
 #define BLOCK_CACHE_GUARD_1 (0xdead0001dead0003)
 #define BLOCK_CACHE_GUARD_2 (0xdead0005dead0007)
-
-/**
- * struct block_cache_entry - block cache entry
- * @guard1:                 Set to BLOCK_CACHE_GUARD_1 to detect out of bound
- *                          writes to data.
- * @data:                   Decrypted block data.
- * @guard2:                 Set to BLOCK_CACHE_GUARD_2 to detect out of bound
- *                          writes to data.
- * @key:                    Key to use for encrypt, decrypt and calculate_mac.
- * @dev:                    Device that block was read from and will be written
- *                          to.
- * @block:                  Block number in dev.
- * @block_size:             Size of block, but match dev->block_size.
- * @mac:                    Last calculated mac of encrypted block data.
- * @loaded:                 Data contains valid data.
- * @dirty:                  Data is not on disk and must be written back or
- *                          discarded before cache entry can be reused.
- * @dirty_ref:              Data is currently being modified. Only a single
- *                          reference should be allowed.
- * @dirty_mac:              Data has been modified. Mac needs to be updated
- *                          after encrypting block.
- * @dirty_tmp:              Data can be discarded by
- *                          block_cache_discard_transaction.
- * @dirty_tr:               Transaction that modified block.
- * @obj:                    Reference tracking struct.
- * @lru_node:               List node for tracking least recently used cache
- *                          entries.
- * @io_op_node:             List node for tracking active read and write
- *                          operations.
- * @io_op:                  Currently active io operation.
- */
-struct block_cache_entry {
-    uint64_t guard1;
-    uint8_t data[MAX_BLOCK_SIZE];
-    uint64_t guard2;
-
-    const struct key *key;
-    struct block_device *dev;
-    data_block_t block;
-    size_t block_size;
-    struct mac mac;
-    bool loaded;
-    bool encrypted;
-    bool dirty;
-    bool dirty_ref;
-    bool dirty_mac;
-    bool dirty_tmp;
-    struct transaction *dirty_tr;
-
-    obj_t obj;
-    struct list_node lru_node;
-    struct list_node io_op_node;
-    enum {
-        BLOCK_CACHE_IO_OP_NONE,
-        BLOCK_CACHE_IO_OP_READ,
-        BLOCK_CACHE_IO_OP_WRITE,
-    } io_op;
-};
 
 static struct list_node block_cache_lru = LIST_INITIAL_VALUE(block_cache_lru);
 static struct block_cache_entry *block_cache_entries;
@@ -495,6 +435,7 @@ static struct block_cache_entry *block_cache_lookup(struct fs *fs,
 
     entry->dev = dev;
     entry->block = block;
+    assert(dev->block_size <= sizeof(entry->data));
     entry->block_size = dev->block_size;
     entry->key = fs->key;
     entry->loaded = false;
@@ -691,8 +632,8 @@ void block_cache_init(void)
     assert(!block_cache_entries);
 
     entry = malloc(sizeof(block_cache_entries[0]) * BLOCK_CACHE_SIZE);
-    full_assert(memset(entry, ~0, sizeof(block_cache_entries[0]) * BLOCK_CACHE_SIZE));
     assert(entry);
+    full_assert(memset(entry, ~0, sizeof(block_cache_entries[0]) * BLOCK_CACHE_SIZE));
     block_cache_entries = entry;
 
     for (i = 0; i < BLOCK_CACHE_SIZE; i++, entry++) {
@@ -1162,6 +1103,7 @@ void *block_get_cleared_super(struct transaction *tr,
     const void *data_ro =  block_cache_get_data(tr->fs, tr->fs->super_dev,
                                                 block, false, NULL, 0, ref);
     data_rw = block_dirty(tr, data_ro, false);
+    assert(tr->fs->super_dev->block_size <= MAX_BLOCK_SIZE);
     memset(data_rw, 0, tr->fs->super_dev->block_size);
     return data_rw;
 }

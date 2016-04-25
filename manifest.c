@@ -16,6 +16,8 @@
 
 #include <trusty_app_manifest.h>
 
+#include "block_cache_priv.h"
+
 trusty_app_manifest_t TRUSTY_APP_MANIFEST_ATTRS trusty_app_manifest =
 {
     .uuid = { /* cea8706d-6cb4-49f3-b994-29e0e478bd29 */
@@ -24,6 +26,6 @@ trusty_app_manifest_t TRUSTY_APP_MANIFEST_ATTRS trusty_app_manifest =
     },
     {
         TRUSTY_APP_CONFIG_MIN_STACK_SIZE(4 * 4096),
-        TRUSTY_APP_CONFIG_MIN_HEAP_SIZE(16 * 4096),
+        TRUSTY_APP_CONFIG_MIN_HEAP_SIZE(8 * 4096 + BLOCK_CACHE_SIZE_BYTES),
     },
 };

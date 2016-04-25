@@ -30,31 +30,61 @@
 #include "tipc_ns.h"
 #include "rpmb.h"
 
+#ifdef APP_STORAGE_RPMB_BLOCK_SIZE
+#define BLOCK_SIZE_RPMB (APP_STORAGE_RPMB_BLOCK_SIZE)
+#else
 #define BLOCK_SIZE_RPMB (512)
+#endif
+#ifdef APP_STORAGE_RPMB_BLOCK_COUNT
+#define BLOCK_COUNT_RPMB (APP_STORAGE_RPMB_BLOCK_COUNT)
+#else
+#define BLOCK_COUNT_RPMB (0) /* Auto detect */
+#endif
+#ifdef APP_STORAGE_MAIN_BLOCK_SIZE
+#define BLOCK_SIZE_MAIN  (APP_STORAGE_MAIN_BLOCK_SIZE)
+#else
 #define BLOCK_SIZE_MAIN (2048)
-#define BLOCK_COUNT (4096) /* TODO: grow file on demand */
+#endif
+#ifdef APP_STORAGE_MAIN_BLOCK_COUNT
+#define BLOCK_COUNT_MAIN (APP_STORAGE_MAIN_BLOCK_COUNT)
+#else
+#define BLOCK_COUNT_MAIN (0x10000000000 / BLOCK_SIZE_MAIN)
+#endif
 
 #define BLOCK_SIZE_RPMB_BLOCKS (BLOCK_SIZE_RPMB / RPMB_BUF_SIZE)
 
 STATIC_ASSERT(BLOCK_SIZE_RPMB_BLOCKS == 1 || BLOCK_SIZE_RPMB_BLOCKS == 2);
 STATIC_ASSERT(BLOCK_SIZE_RPMB_BLOCKS * RPMB_BUF_SIZE == BLOCK_SIZE_RPMB);
 
+STATIC_ASSERT(BLOCK_COUNT_RPMB == 0 || BLOCK_COUNT_RPMB >= 8);
+
+STATIC_ASSERT(BLOCK_SIZE_MAIN >= 256);
+STATIC_ASSERT(BLOCK_COUNT_MAIN >= 8);
+STATIC_ASSERT(BLOCK_SIZE_MAIN >= BLOCK_SIZE_RPMB);
+
 #define SS_ERR(args...)  fprintf(stderr, "ss: " args)
 #define SS_WARN(args...)  fprintf(stderr, "ss: " args)
 #define SS_DBG_IO(args...)  do {} while(0)
 
-static uint32_t rpmb_search_size(struct block_device_tipc *state, uint16_t hint)
+static int rpmb_check(struct block_device_tipc *state, uint16_t block)
 {
     int ret;
     uint8_t tmp[RPMB_BUF_SIZE];
+    ret = rpmb_read(state->rpmb_state, tmp, block, 1);
+    SS_DBG_IO("%s: check rpmb_block %d, ret %d\n",
+              __func__, block, ret);
+    return ret;
+}
+
+static uint32_t rpmb_search_size(struct block_device_tipc *state, uint16_t hint)
+{
+    int ret;
     uint32_t low = 0;
     uint16_t high = ~0;
     uint16_t curr = hint - 1;
 
     while (low <= high) {
-        ret = rpmb_read(state->rpmb_state, tmp, curr, 1);
-        SS_DBG_IO("%s: check rpmb_block %d, ret %d\n",
-                  __func__, curr, ret);
+        ret = rpmb_check(state, curr);
         switch (ret) {
         case 0:
             low = curr + 1;
@@ -213,8 +243,17 @@ int block_device_tipc_init(struct block_device_tipc *state,
         goto err_rpmb_init;
     }
 
-    rpmb_block_count = rpmb_search_size(state, 0); /* TODO: get hint from ns */
-    rpmb_block_count /= BLOCK_SIZE_RPMB_BLOCKS;
+    if (BLOCK_COUNT_RPMB) {
+        rpmb_block_count = BLOCK_COUNT_RPMB;
+        ret = rpmb_check(state, rpmb_block_count * BLOCK_SIZE_RPMB_BLOCKS - 1);
+        if (ret) {
+            SS_ERR("%s: bad static rpmb size, %d\n", __func__, rpmb_block_count);
+            goto err_bad_rpmb_size;
+        }
+    } else {
+        rpmb_block_count = rpmb_search_size(state, 0); /* TODO: get hint from ns */
+        rpmb_block_count /= BLOCK_SIZE_RPMB_BLOCKS;
+    }
     if (rpmb_block_count < rpmb_part2_base) {
         SS_ERR("%s: bad rpmb size, %d\n", __func__, rpmb_block_count);
         goto err_bad_rpmb_size;
@@ -249,7 +288,7 @@ int block_device_tipc_init(struct block_device_tipc *state,
     state->dev_ns.start_read = block_device_tipc_ns_start_read;
     state->dev_ns.start_write = block_device_tipc_ns_start_write;
     state->dev_ns.wait_for_io = block_device_tipc_ns_wait_for_io;
-    state->dev_ns.block_count = BLOCK_COUNT; /* TODO: get from ns */
+    state->dev_ns.block_count = BLOCK_COUNT_MAIN;
     state->dev_ns.block_size = BLOCK_SIZE_MAIN;
     state->dev_ns.block_num_size = sizeof(data_block_t);
     state->dev_ns.mac_size = sizeof(struct mac);
