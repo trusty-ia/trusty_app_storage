@@ -28,6 +28,7 @@
 #include "block_cache.h"
 #include "block_cache_priv.h"
 #include "crypt.h"
+#include "debug.h"
 #include "debug_stats.h"
 #include "transaction.h"
 
@@ -208,7 +209,12 @@ void block_cache_complete_write(struct block_device *dev,
         printf("%s: write block %lld complete\n",
                __func__, entry->block);
     }
-    assert(!failed); /* TODO: fail transaction instead */
+    assert(entry->dirty_tr);
+    if (failed) {
+        pr_err("write block %lld failed, fail transaction\n", entry->block);
+        transaction_fail(entry->dirty_tr);
+    }
+    entry->dirty_tr = NULL;
 }
 
 /**
@@ -346,7 +352,6 @@ static void block_cache_entry_clean(struct block_cache_entry *entry)
 
     block_cache_queue_write(entry, entry->data);
     entry->dirty = false;
-    entry->dirty_tr = NULL;
 }
 
 /**
@@ -762,8 +767,8 @@ void block_cache_discard_transaction(struct transaction *tr, bool discard_all)
         }
 
         if (block_cache_entry_has_refs(entry)) {
-            printf("%s: tr %p, block %lld has ref (dirty_ref %d)\n",
-                   __func__, tr, entry->block, entry->dirty_ref);
+            pr_warn("tr %p, block %lld has ref (dirty_ref %d)\n",
+                    tr, entry->block, entry->dirty_ref);
         } else {
             assert(!entry->dirty_ref);
         }
@@ -820,7 +825,7 @@ const void *block_get_super(struct fs *fs,
 }
 
 /**
- * block_get - Get block data
+ * block_get_no_tr_fail - Get block data
  * @tr:         Transaction to get device from
  * @block_mac:  Block number and mac
  * @iv:         Initial vector used to decrypt block, or NULL. If NULL, the
@@ -828,13 +833,14 @@ const void *block_get_super(struct fs *fs,
  *              Only NULL is currently supported.
  * @ref:        Pointer to store reference in.
  *
- * Return: Const block data pointer, or NULL if mac of loaded data does not
- * mac in @block_mac.
+ * Return: Const block data pointer, or NULL if mac of loaded data does not mac
+ * in @block_mac or a read error was reported by the block device when loading
+ * the data.
  */
-const void *block_get(struct transaction *tr,
-                      const struct block_mac *block_mac,
-                      const struct iv *iv,
-                      obj_ref_t *ref)
+const void *block_get_no_tr_fail(struct transaction *tr,
+                                 const struct block_mac *block_mac,
+                                 const struct iv *iv,
+                                 obj_ref_t *ref)
 {
     data_block_t block;
 
@@ -849,6 +855,43 @@ const void *block_get(struct transaction *tr,
                                 true, block_mac_to_mac(tr, block_mac),
                                 tr->fs->mac_size, ref);
 }
+
+/**
+ * block_get - Get block data
+ * @tr:         Transaction to get device from
+ * @block_mac:  Block number and mac
+ * @iv:         Initial vector used to decrypt block, or NULL. If NULL, the
+ *              start of the loaded block data is used as the iv.
+ *              Only NULL is currently supported.
+ * @ref:        Pointer to store reference in.
+ *
+ * Return: Const block data pointer, or NULL if the transaction has failed. A
+ * transaction failure is triggered if mac of loaded data does not mac in
+ * @block_mac or a read error was reported by the block device when loading the
+ * data.
+ */
+const void *block_get(struct transaction *tr,
+                      const struct block_mac *block_mac,
+                      const struct iv *iv,
+                      obj_ref_t *ref)
+{
+    const void *data;
+
+    assert(tr);
+
+    if (tr->failed) {
+        pr_warn("transaction already failed\n");
+        return NULL;
+    }
+
+    data = block_get_no_tr_fail(tr, block_mac, iv, ref);
+    if (!data && !tr->failed) {
+        pr_warn("transaction failed\n");
+        transaction_fail(tr);
+    }
+    return data;
+}
+
 
 /**
  * block_dirty - Mark cache entry dirty and return non-const block data pointer.
@@ -978,7 +1021,7 @@ static void block_put_dirty_etc(struct transaction *tr,
         ret = generate_iv(iv);
         assert(!ret);
     } else {
-        printf("%s: block %lld, not dirty\n", __func__, entry->block);
+        pr_warn("block %lld, not dirty\n", entry->block);
         assert(entry->dirty_tr == NULL);
         assert(!tr);
     }

@@ -50,6 +50,11 @@ const void *block_get_super(struct fs *fs,
                             data_block_t block,
                             obj_ref_t *ref);
 
+const void *block_get_no_tr_fail(struct transaction *tr,
+                                 const struct block_mac *block_mac,
+                                 const struct iv *iv,
+                                 obj_ref_t *ref);
+
 const void *block_get(struct transaction *tr,
                       const struct block_mac *block_mac,
                       const struct iv *iv,
