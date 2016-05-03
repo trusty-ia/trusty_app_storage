@@ -864,7 +864,7 @@ static int block_tree_check_sub_tree(struct transaction *tr,
         return -1;
     }
 
-    node_ro = block_get(tr, block_mac, NULL, &ref);
+    node_ro = block_get_no_tr_fail(tr, block_mac, NULL, &ref);
     if (!node_ro) {
         if (tr->failed) {
             /*
@@ -943,7 +943,7 @@ static int block_tree_check_sub_tree(struct transaction *tr,
                                                        child_min_key,
                                                        child_max_key,
                                                        updating);
-            node_ro = block_get(tr, block_mac, NULL, &ref);
+            node_ro = block_get_no_tr_fail(tr, block_mac, NULL, &ref);
             if (!node_ro) {
                 pr_warn("%3lld: unreadable\n",
                         block_mac_to_block(tr, block_mac));
@@ -980,7 +980,7 @@ static int block_tree_check_sub_tree(struct transaction *tr,
                                                    &child_block_mac, false,
                                                    child_min_key, child_max_key,
                                                    updating);
-        node_ro = block_get(tr, block_mac, NULL, &ref);
+        node_ro = block_get_no_tr_fail(tr, block_mac, NULL, &ref);
         if (!node_ro) {
             pr_warn("%3lld: unreadable\n", block_mac_to_block(tr, block_mac));
             return -2;
