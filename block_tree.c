@@ -27,6 +27,7 @@
 #include "block_cache.h"
 #include "block_tree.h"
 #include "crypt.h"
+#include "debug.h"
 #include "transaction.h"
 
 #if BUILD_STORAGE_TEST
@@ -445,6 +446,8 @@ static data_block_t block_tree_node_get_key(const struct block_tree *tree,
     const size_t key_count = block_tree_node_max_key_count(tree, node_ro);
     const size_t key_size = tree->key_size;
 
+    assert(node_ro);
+
     if (index < key_count) {
         keyp = node_ro->data + index * tree->key_size;
         assert(sizeof(key) >= key_size);
@@ -475,6 +478,7 @@ static void block_tree_node_set_key(const struct block_tree *tree,
     const size_t key_size = tree->key_size;
     const size_t key_count = block_tree_node_max_key_count(tree, node_rw);
 
+    assert(node_rw);
     assert(index < key_count);
     assert(key_size <= sizeof(new_key));
     memcpy(node_rw->data + index * tree->key_size, &new_key, key_size); /* TODO: support big-endian host */
@@ -820,7 +824,8 @@ err:
  * @updating:       %true if @tree is currently updating and nodes below
  *                  min-full should be allowed, %false otherwise.
  *
- * Return: Depth of tree/branch or -1 if an error was detected.
+ * Return: Depth of tree/branch, -1 if an error was detected or -2 if @block_mac
+ * could not be read.
  *
  * TODO: Reduce overlap with and move more checks to block_tree_node_check.
  */
@@ -852,6 +857,12 @@ static int block_tree_check_sub_tree(struct transaction *tr,
 
     depth = 1;
 
+    if (block_mac_to_block(tr, block_mac) >= tr->fs->dev->block_count) {
+        printf("%s: %3lld: invalid\n",
+               __func__, block_mac_to_block(tr, block_mac));
+        return -1;
+    }
+
     node_ro = block_get(tr, block_mac, NULL, &ref);
     if (!node_ro) {
         if (tr->failed) {
@@ -859,13 +870,12 @@ static int block_tree_check_sub_tree(struct transaction *tr,
              * Failed transactions discards dirty cache entries so parts of the
              * tree may now be unreadable.
              */
-            printf("%s: ignore unreadable block %lld, transaction failed\n",
-                   __func__, block_mac_to_block(tr, block_mac));
-            return 0;
+            pr_warn("ignore unreadable block %lld, transaction failed\n",
+                    block_mac_to_block(tr, block_mac));
+            return -2;
         }
-        printf("%s: %3lld: unreadable\n",
-               __func__, block_mac_to_block(tr, block_mac));
-        return -1;
+        pr_warn("%3lld: unreadable\n", block_mac_to_block(tr, block_mac));
+        return -2;
     }
 
     if (!block_tree_node_check(tr, tree, node_ro, block_mac_to_block(tr, block_mac),
@@ -930,10 +940,16 @@ static int block_tree_check_sub_tree(struct transaction *tr,
                                                        child_min_key,
                                                        child_max_key,
                                                        updating);
-            if (sub_tree_depth < 0) {
+            if (sub_tree_depth == -1) {
                 goto err;
             }
-            if (i == 0) {
+            if (sub_tree_depth == -2) {
+                pr_warn("%lld: unreadable subtree at %d\n",
+                        block_mac_to_block(tr, block_mac), i);
+                if (depth == 1) {
+                    depth = -2;
+                }
+            } else if (depth == 1 || depth == -2) {
                 depth = sub_tree_depth + 1;
             } else if (sub_tree_depth != depth - 1) {
                 printf("%s: %lld: bad subtree depth at %d, %d != %d\n",
@@ -952,13 +968,18 @@ static int block_tree_check_sub_tree(struct transaction *tr,
         sub_tree_depth = block_tree_check_sub_tree(tr, tree, child_data, false,
                                                    child_min_key, child_max_key,
                                                    updating);
-        if (sub_tree_depth < 0) {
+        if (sub_tree_depth == -1) {
             goto err;
         }
-        if (!last_child) {
+        if (sub_tree_depth == -2) {
+            pr_warn("%lld: unreadable subtree at %d\n",
+                    block_mac_to_block(tr, block_mac), last_child);
+            if (depth == 1) {
+                depth = -2;
+            }
+        } else if (depth == 1 || depth == -2) {
             depth = sub_tree_depth + 1;
-        }
-        if (sub_tree_depth != depth - 1) {
+        } else if (sub_tree_depth != depth - 1) {
             printf("%s: %lld: bad subtree depth at %d, %d != %d\n",
                    __func__, block_mac_to_block(tr, block_mac),
                    last_child, sub_tree_depth, depth - 1);
@@ -1000,6 +1021,13 @@ bool block_tree_check(struct transaction *tr, const struct block_tree *tree)
                                     0, ~0ULL,
                                     tree->updating);
     if (ret < 0) {
+        if (ret == -2) {
+            pr_warn("block_tree not fully readable\n");
+            if (!tr->failed) {
+                transaction_fail(tr);
+            }
+            return true;
+        }
         printf("%s: invalid block_tree:\n", __func__);
         block_tree_print(tr, tree);
         return false;
@@ -1244,6 +1272,12 @@ void block_tree_walk(struct transaction *tr,
         assert(path->count < countof(path->entry));
 
         node_ro = block_get(tr, block_mac, NULL, &ref[ref_index]);
+        if (!node_ro) {
+            assert(tr->failed);
+            pr_warn("transaction failed, abort\n");
+            path->count = 0;
+            goto err;
+        }
         assert(node_ro);
 
         path->entry[path->count].block_mac = *block_mac;
@@ -1289,6 +1323,7 @@ void block_tree_walk(struct transaction *tr,
         }
         path->count++;
     }
+err:
     if (parent_node_ro) {
         block_put(parent_node_ro, &ref[!ref_index]);
     }
@@ -1332,6 +1367,12 @@ void block_tree_path_next(struct block_tree_path *path)
     parent_next_key = depth > 0 ? path->entry[depth - 1].next_key : 0;
 
     node_ro = block_get(path->tr, block_mac, NULL, &ref[ref_index]);
+    if (!node_ro) {
+        assert(path->tr->failed);
+        pr_warn("transaction failed, abort\n");
+        goto err_no_refs;
+    }
+    assert(node_ro);
     assert(block_tree_node_is_leaf(node_ro));
     prev_key = block_tree_node_get_key(path->tree, block_mac_to_block(path->tr, block_mac), node_ro, index);
     index++;
@@ -1371,6 +1412,12 @@ void block_tree_path_next(struct block_tree_path *path)
         index = path->entry[depth].index;
 
         node_ro = block_get(path->tr, block_mac, NULL, &ref[ref_index]);
+        if (!node_ro) {
+            assert(path->tr->failed);
+            pr_warn("transaction failed, abort\n");
+            goto err_no_refs;
+        }
+        assert(node_ro);
         assert(!block_tree_node_is_leaf(node_ro));
 
         parent_next_key = depth > 0 ? path->entry[depth - 1].next_key : 0;
@@ -1401,6 +1448,12 @@ void block_tree_path_next(struct block_tree_path *path)
     assert(next_child);
     while (++depth < path->count - 1) {
         node_ro = block_get(path->tr, next_child, NULL, &ref[ref_index]);
+        if (!node_ro) {
+            assert(path->tr->failed);
+            pr_warn("transaction failed, abort\n");
+            goto err_has_parent_ref;
+        }
+        assert(node_ro);
         assert(!block_tree_node_is_leaf(node_ro));
         path->entry[depth].block_mac = *next_child;
         block_put(parent_node_ro, &ref[!ref_index]);
@@ -1424,6 +1477,12 @@ void block_tree_path_next(struct block_tree_path *path)
 
     assert(next_child);
     node_ro = block_get(path->tr, next_child, NULL, &ref[ref_index]);
+    if (!node_ro) {
+        assert(path->tr->failed);
+        pr_warn("transaction failed, abort\n");
+        goto err_has_parent_ref;
+    }
+    assert(node_ro);
     assert(block_tree_node_is_leaf(node_ro));
     path->entry[depth].block_mac = *next_child;
     block_put(parent_node_ro, &ref[!ref_index]);
@@ -1443,6 +1502,13 @@ void block_tree_path_next(struct block_tree_path *path)
         printf("%s: path.data.block = %lld\n",
                __func__, block_mac_to_block(path->tr, &path->data));
     }
+    return;
+
+err_has_parent_ref:
+    block_put(parent_node_ro, &ref[!ref_index]);
+err_no_refs:
+    assert(path->tr->failed);
+    path->count = 0;
 }
 
 /**
@@ -1469,6 +1535,9 @@ static struct block_tree_node *block_tree_block_dirty(struct transaction *tr,
     assert(path_index || block_mac_same_block(tr, block_mac, &path->tree->root));
 
     if (!block_tree_node_need_copy(tr, path->tree, block_mac)) {
+        if (tr->failed) {
+            return NULL;
+        }
         return block_dirty(tr, node_ro, !path->tree->allow_copy_on_write);
     }
     assert(path->tree->allow_copy_on_write);
@@ -1484,7 +1553,7 @@ static struct block_tree_node *block_tree_block_dirty(struct transaction *tr,
     assert(!tr->failed);
     block_free(tr, block_mac_to_block(tr, block_mac));
     if (tr->failed) {
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         return NULL;
     }
     block_mac_set_block(tr, block_mac, new_block);
@@ -1562,7 +1631,7 @@ void block_tree_path_put_dirty(struct transaction *tr,
         if (tr->failed) {
             assert(!parent_node_rw);
             block_put_dirty_discard(data, data_ref);
-            printf("%s: transaction failed, abort\n", __func__);
+            pr_warn("transaction failed, abort\n");
             return;
         }
         assert(parent_node_rw);
@@ -1580,7 +1649,8 @@ void block_tree_path_put_dirty(struct transaction *tr,
 
         /* check that block was not copied when not needed */
         assert(block_tree_node_need_copy(tr, path->tree, block_mac) ||
-               block_mac_same_block(tr, block_mac, &path->entry[path_index + 1].block_mac));
+               block_mac_same_block(tr, block_mac, &path->entry[path_index + 1].block_mac) ||
+               tr->failed);
 
         if (!block_mac_same_block(tr, block_mac, &path->entry[path_index + 1].block_mac)) {
             if (print_internal_changes) {
@@ -1589,6 +1659,13 @@ void block_tree_path_put_dirty(struct transaction *tr,
                        block_mac_to_block(tr, &path->entry[path_index + 1].block_mac));
             }
             block_mac_set_block(tr, block_mac, block_mac_to_block(tr, &path->entry[path_index + 1].block_mac));
+        }
+
+        if (tr->failed) {
+            block_put_dirty_discard(data, data_ref);
+            block_put_dirty_discard(parent_node_rw, &parent_node_ref);
+            pr_warn("transaction failed, abort\n");
+            return;
         }
 
         assert(block_mac_eq(tr, block_mac, &path->entry[path_index + 1].block_mac));
@@ -1643,7 +1720,7 @@ void block_tree_update_key(struct transaction *tr,
         }
         node_rw = block_tree_block_get_write(tr, path, path_index, &node_ref);
         if (tr->failed) {
-            printf("%s: transaction failed, abort\n", __func__);
+            pr_warn("transaction failed, abort\n");
             return;
         }
         assert(node_rw);
@@ -1798,7 +1875,7 @@ static void block_tree_node_split(struct transaction *tr,
         left_block_num = block_mac_to_block(tr, block_mac);
     }
     if (tr->failed) {
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         return;
     }
     assert(block_mac);
@@ -1818,8 +1895,9 @@ static void block_tree_node_split(struct transaction *tr,
     }
 
     node_left_rw = block_tree_block_get_write(tr, path, path->count, &node_left_ref);
-    if (tr->failed) {
-        printf("%s: transaction failed, abort\n", __func__);
+    if (!node_left_rw) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
         return;
     }
     assert(node_left_rw);
@@ -1832,6 +1910,10 @@ static void block_tree_node_split(struct transaction *tr,
                                       !path->tree->allow_copy_on_write,
                                       &node_left_ref); /* TODO: use allocated node for root instead since we need to update the mac anyway */
         assert(node_left_rw);
+        if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
+            goto err_copy_parent;
+        }
         //parent_node_rw = block_get_cleared(path->tree->root.block);
         memset(parent_node_rw, 0, path->tree->block_size); /* TODO: use block_get_cleared */
         parent_index = 0;
@@ -1845,24 +1927,29 @@ static void block_tree_node_split(struct transaction *tr,
         parent_node_rw = block_tree_block_get_write(tr, path, path->count - 1,
                                                     &parent_node_ref);
         if (tr->failed) {
-            block_put_dirty_discard(node_left_rw, &node_left_ref);
-            printf("%s: transaction failed, abort\n", __func__);
-            return;
+            pr_warn("transaction failed, abort\n");
+            goto err_get_parent;
         }
         assert(parent_node_rw);
         assert(!block_tree_node_is_leaf(parent_node_rw));
         left_block_mac = block_tree_node_get_child_data_rw(path->tree, parent_node_rw, parent_index);
     }
     assert(block_mac_to_block(tr, left_block_mac) == left_block_num);
+    assert(!tr->failed);
     node_right_rw = block_get_copy(tr, node_left_rw,
                                    block_mac_to_block(tr, &right),
                                    !path->tree->allow_copy_on_write,
                                    &node_right_ref);
+    if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
+        goto err_copy_right;
+    }
     assert(block_tree_node_is_leaf(node_left_rw) == is_leaf);
     assert(block_tree_node_is_leaf(node_right_rw) == is_leaf);
     assert(is_leaf || (append_key && append_child));
     assert(!is_leaf || (append_key && append_data));
     assert(block_tree_node_full(path->tree, node_left_rw));
+    assert(!tr->failed);
 
     max_key_count = block_tree_node_max_key_count(path->tree, node_left_rw);
     split_index = (max_key_count + 1) / 2;
@@ -1966,6 +2053,14 @@ static void block_tree_node_split(struct transaction *tr,
         }
         block_tree_node_split(tr, path, overflow_key, &overflow_child, 0); /* TODO: use a loop instead */
     }
+    return;
+
+err_copy_right:
+    block_put_dirty_discard(node_right_rw, &node_right_ref);
+err_copy_parent:
+    block_put_dirty_discard(parent_node_rw, &parent_node_ref);
+err_get_parent:
+    block_put_dirty_discard(node_left_rw, &node_left_ref);
 }
 
 /**
@@ -2005,12 +2100,17 @@ static struct block_mac block_tree_get_sibling_block(struct transaction *tr,
     parent_index = path->entry[path->count - 2].index;
 
     node_ro = block_get(tr, parent, NULL, &node_ref);
+    if (!node_ro) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
+        goto err;
+    }
     parent_index = block_tree_sibling_index(parent_index);
     block_mac_ptr = block_tree_node_get_child_data(path->tree, node_ro, parent_index);
     block_mac = *block_mac_ptr; /* TODO: support variable size block_mac */
     assert(block_mac_valid(tr, &block_mac));
     block_put(node_ro, &node_ref);
-
+err:
     return block_mac;
 }
 
@@ -2102,6 +2202,11 @@ static void block_tree_remove_internal(struct transaction *tr,
     block_mac = &path->entry[path->count - 1].block_mac;
     index = path->entry[path->count - 1].index;
     node_ro = block_get(tr, block_mac, NULL, &node_ref);
+    if (!node_ro) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
+        return;
+    }
     assert(!block_tree_node_is_leaf(node_ro));
     assert(index > 0);
 
@@ -2130,7 +2235,7 @@ static void block_tree_remove_internal(struct transaction *tr,
     node_rw = block_tree_block_dirty(tr, path, path->count - 1, node_ro);
     if (tr->failed) {
         block_put(node_ro, &node_ref);
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         return;
     }
 
@@ -2185,11 +2290,27 @@ static void block_tree_node_merge(struct transaction *tr,
     node_is_left = !path->entry[path->count - 2].index;
     merge_block = block_tree_get_sibling_block(tr, path);
 
+    if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
+        return;
+    }
+
     node_ro = block_get(tr, block_mac, NULL, node_ref);
+    if (!node_ro) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
+        return;
+    }
     assert(node_ro);
     is_leaf = block_tree_node_is_leaf(node_ro);
 
     merge_node_ro = block_get(tr, &merge_block, NULL, merge_node_ref);
+    if (!merge_node_ro) {
+        assert(tr->failed);
+        block_put(node_ro, node_ref);
+        pr_warn("transaction failed, abort\n");
+        return;
+    }
     assert(merge_node_ro);
     assert(is_leaf == block_tree_node_is_leaf(merge_node_ro));
 
@@ -2207,11 +2328,11 @@ static void block_tree_node_merge(struct transaction *tr,
         assert(!tr->failed);
         merge_node_rw = block_tree_block_dirty(tr, path, path->count - 1, merge_node_ro);
         block_tree_path_set_sibling_block(path, &merge_block, node_is_left);
-        if (tr->failed) {
-             assert(!merge_node_rw);
+        if (!merge_node_rw) {
+             assert(tr->failed);
              block_put(node_ro, node_ref);
              block_put(merge_node_ro, merge_node_ref);
-             printf("%s: transaction failed, abort\n", __func__);
+             pr_warn("transaction failed, abort\n");
              return;
         }
         assert(!block_tree_node_need_copy(tr, path->tree, &merge_block));
@@ -2298,11 +2419,11 @@ static void block_tree_node_merge(struct transaction *tr,
         left = block_mac;
         right = &merge_block;
         node_rw = block_tree_block_dirty(tr, path, path->count - 1, node_ro);
-        if (tr->failed) {
-             assert(!node_rw);
+        if (!node_rw) {
+             assert(tr->failed);
              block_put(node_ro, node_ref);
              block_put(merge_node_ro, merge_node_ref);
-             printf("%s: transaction failed, abort\n", __func__);
+             pr_warn("transaction failed, abort\n");
              return;
         }
         assert(!block_tree_node_need_copy(tr, path->tree, left));
@@ -2385,7 +2506,7 @@ void block_tree_insert_block_mac(struct transaction *tr, struct block_tree *tree
         assert(!tree->copy_on_write || tree->allow_copy_on_write);
         block_mac_set_block(tr, &tree->root, block_allocate_etc(tr, !tree->allow_copy_on_write));
         if (tr->failed) {
-            printf("%s: transaction failed, abort\n", __func__);
+            pr_warn("transaction failed, abort\n");
             goto err;
         }
         if (print_internal_changes) {
@@ -2401,6 +2522,10 @@ void block_tree_insert_block_mac(struct transaction *tr, struct block_tree *tree
     }
 
     block_tree_walk(tr, tree, key, false, &path);
+    if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
+        goto err;
+    }
 
     assert(path.count > 0);
 
@@ -2408,6 +2533,11 @@ void block_tree_insert_block_mac(struct transaction *tr, struct block_tree *tree
     index = path.entry[path.count - 1].index;
 
     node_ro = block_get(tr, block_mac, NULL, &node_ref);
+    if (!node_ro) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
+        goto err;
+    }
 
     if (print_changes) {
         printf("%s: key %lld, data.block %lld, index %d\n",
@@ -2422,9 +2552,9 @@ void block_tree_insert_block_mac(struct transaction *tr, struct block_tree *tree
            block_tree_node_get_key(tree, ~0, node_ro, index) == key);
 
     node_rw = block_tree_block_dirty(tr, &path, path.count - 1, node_ro);
-    if (tr->failed) {
-        assert(!node_rw);
-        printf("%s: transaction failed, abort\n", __func__);
+    if (!node_rw) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
         block_put(node_ro, &node_ref);
         goto err;
     }
@@ -2452,7 +2582,7 @@ err:
 }
 
 /**
- * block_tree_insert_block_mac - Insert a data_block_t type entry into a B+ tree
+ * block_tree_insert - Insert a data_block_t type entry into a B+ tree
  * @tr:             Transaction object.
  * @tree:           Tree object.
  * @key:            Key of new entry.
@@ -2504,7 +2634,7 @@ void block_tree_remove(struct transaction *tr, struct block_tree *tree,
 
     block_tree_walk(tr, tree, key, false, &path); /* TODO: make writeable */
     if (tr->failed) {
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         goto err;
     }
     assert(path.count > 0);
@@ -2521,6 +2651,11 @@ void block_tree_remove(struct transaction *tr, struct block_tree *tree,
     index = path.entry[path.count - 1].index;
 
     node_ro = block_get(tr, block_mac, NULL, &node_ref);
+    if (!node_ro) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
+        goto err;
+    }
     assert(block_tree_node_is_leaf(node_ro));
     assert(block_tree_node_get_key(tree, ~0, node_ro, index) == key);
     assert(!memcmp(block_tree_node_get_child_data(tree, node_ro, index), &data,
@@ -2535,7 +2670,7 @@ void block_tree_remove(struct transaction *tr, struct block_tree *tree,
     node_rw = block_tree_block_dirty(tr, &path, path.count - 1, node_ro);
     if (tr->failed) {
         block_put(node_ro, &node_ref);
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         goto err;
     }
     assert(node_rw);
@@ -2616,7 +2751,7 @@ void block_tree_update_block_mac(struct transaction *tr, struct block_tree *tree
 
     block_tree_walk(tr, tree, old_key, false, &path); /* TODO: make writeable */
     if (tr->failed) {
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         goto err;
     }
     assert(path.count > 0);
@@ -2634,6 +2769,11 @@ void block_tree_update_block_mac(struct transaction *tr, struct block_tree *tree
     index = path.entry[path.count - 1].index;
 
     node_ro = block_get(tr, block_mac, NULL, &node_ref);
+    if (!node_ro) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
+        goto err;
+    }
     max_key_count = block_tree_node_max_key_count(tree, node_ro);
     assert(block_tree_node_is_leaf(node_ro));
     assert(block_tree_node_get_key(tree, ~0, node_ro, index) == old_key);
@@ -2655,7 +2795,7 @@ void block_tree_update_block_mac(struct transaction *tr, struct block_tree *tree
     node_rw = block_tree_block_dirty(tr, &path, path.count - 1, node_ro);
     if (tr->failed) {
         block_put(node_ro, &node_ref);
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         goto err;
     }
     assert(node_rw);
