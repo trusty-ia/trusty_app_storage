@@ -167,9 +167,15 @@ static void transaction_delete_active(struct transaction *tr)
 void transaction_fail(struct transaction *tr)
 {
     assert(!tr->failed);
+
+    tr->failed = true;
+
+    if (tr->complete) {
+        return;
+    }
+
     block_cache_discard_transaction(tr, true);
     transaction_delete_active(tr);
-    tr->failed = true;
     file_transaction_failed(tr);
 }
 
@@ -224,6 +230,7 @@ void transaction_complete(struct transaction *tr)
     bool super_block_updated;
 
     assert(tr->fs);
+    assert(!tr->complete);
 
     //printf("%s: %lld\n", __func__, tr->version);
 
@@ -305,13 +312,18 @@ void transaction_complete(struct transaction *tr)
     tr->fs->files.root = new_files;
     tr->fs->super_block_version = tr->fs->written_super_block_version;
 
-    check_free_tree(tr, &tr->fs->free);
+    transaction_delete_active(tr);
+    tr->complete = true;
 
     file_transaction_success(tr);
+    assert(!tr->failed);
 
-    transaction_delete_active(tr);
+    check_free_tree(tr, &tr->fs->free);
 
     list_for_every_entry_safe(&tr->fs->transactions, other_tr, tmp_tr, struct transaction, node) {
+        if (tr->failed) {
+            break;
+        }
         if (!transaction_is_active(other_tr)) {
             continue;
         }
@@ -320,6 +332,20 @@ void transaction_complete(struct transaction *tr)
             transaction_fail(other_tr);
         }
     }
+    if (tr->failed) {
+        pr_warn("tr %p, transaction failed while failing conflicting transactions\n",
+                tr);
+        tr->failed = false;
+        list_for_every_entry_safe(&tr->fs->transactions, other_tr, tmp_tr, struct transaction, node) {
+            if (!transaction_is_active(other_tr)) {
+                continue;
+            }
+            pr_warn("tr %p, fail possibly conflicting transaction: %p\n",
+                    tr, other_tr);
+            transaction_fail(other_tr);
+        }
+    }
+    assert(!tr->failed);
     block_cache_discard_transaction(tr, false);
 
 err_transaction_failed:
@@ -345,6 +371,7 @@ void transaction_activate(struct transaction *tr)
     block_mac_size = block_num_size + tr->fs->mac_size;
 
     tr->failed = false;
+    tr->complete = false;
     tr->min_free_block = 0;
     tr->last_free_block = 0;
     tr->last_tmp_free_block = 0;

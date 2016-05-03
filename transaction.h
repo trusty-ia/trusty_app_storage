@@ -31,6 +31,7 @@
  * @failed:                 %true if transaction ran out of disk space, or
  *                          collided with another transaction, %false if no
  *                          error has occured since transaction_activate.
+ * @complete:               Transaction has been written to disk.
  * @min_free_block:         Used when completing a transaction to track how much
  *                          of the free set has been updated.
  * @last_free_block:        Similar to @last_tmp_free_block, used when
@@ -51,6 +52,7 @@ struct transaction {
     struct fs *fs;
     struct list_node open_files;
     bool failed;
+    bool complete;
     data_block_t min_free_block;
     data_block_t last_free_block;
     data_block_t last_tmp_free_block;
