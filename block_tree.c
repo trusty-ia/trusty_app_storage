@@ -768,6 +768,7 @@ static bool block_tree_node_check(const struct transaction *tr,
 {
     uint i;
     data_block_t key;
+    data_block_t prev_key = 0;
     int empty_count;
     const void *child_data;
     size_t key_count = block_tree_node_max_key_count(tree, node_ro);
@@ -799,11 +800,17 @@ static bool block_tree_node_check(const struct transaction *tr,
             }
             continue;
         }
-        if (key < min_key || key > max_key) {
-            printf("%s: %lld: bad key at %d, %lld not in [%lld-%lld]\n",
-                   __func__, node_block, i, key, min_key, max_key);
-            goto err;
+        if (key < prev_key || key < min_key || key > max_key) {
+            printf("%s: %lld: bad key at %d, %lld not in [%lld/%lld-%lld]\n",
+                   __func__, node_block, i, key, min_key, prev_key, max_key);
+            if (tr->failed && key >= prev_key) {
+                printf("%s: transaction failed, ignore\n", __func__);
+            }
+            else {
+                goto err;
+            }
         }
+        prev_key = key;
     }
     return true;
 
@@ -916,17 +923,13 @@ static int block_tree_check_sub_tree(struct transaction *tr,
             }
             continue;
         }
-        if (key < min_key || key > max_key) {
-            printf("%s: %lld: bad key at %d, %lld not in [%lld-%lld]\n",
-                   __func__, block_mac_to_block(tr, block_mac),
-                   i, key, min_key, max_key);
-            goto err;
-        }
         if (i == 0 && min_key && is_leaf && key != min_key) {
             printf("%s: %lld: bad key at %d, %lld not start of [%lld-%lld]\n",
                    __func__, block_mac_to_block(tr, block_mac),
                    i, key, min_key, max_key);
-            if (!key) {
+            if (tr->failed) {
+                printf("%s: transaction failed, ignore\n", __func__);
+            } else if (!key) {
                 printf("%s: ignore empty node error\n", __func__); // warn only for now
             } else {
                 goto err;
