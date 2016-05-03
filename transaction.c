@@ -221,6 +221,7 @@ void transaction_complete(struct transaction *tr)
     struct transaction *tmp_tr;
     struct transaction *other_tr;
     struct block_set new_free_set = BLOCK_SET_INITIAL_VALUE(new_free_set);
+    bool super_block_updated;
 
     assert(tr->fs);
 
@@ -284,7 +285,13 @@ void transaction_complete(struct transaction *tr)
     assert(block_range_empty(new_free_set.inserting_range[0]));
     check_free_tree(tr, &new_free_set);
 
-    update_super_block(tr, &new_free_set.block_tree.root, &new_files);
+    super_block_updated = update_super_block(tr, &new_free_set.block_tree.root,
+                                             &new_files);
+    if (!super_block_updated) {
+        assert(tr->failed);
+        pr_warn("failed to update super block, abort\n");
+        goto err_transaction_failed;
+    }
     block_cache_clean_transaction(tr);
 
     /*

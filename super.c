@@ -90,8 +90,11 @@ STATIC_ASSERT(sizeof(struct super_block) >= 128);
  * @tr:         Transaction object.
  * @free:       New free root.
  * @files:      New files root.
+ *
+ * Return: %true if super block was updated (in cache), %false if transaction
+ * failed before super block was updated.
  */
-void update_super_block(struct transaction *tr,
+bool update_super_block(struct transaction *tr,
                         const struct block_mac *free,
                         const struct block_mac *files)
 {
@@ -111,6 +114,10 @@ void update_super_block(struct transaction *tr,
 
     super_rw = block_get_cleared_super(tr, tr->fs->super_block[index],
                                        &super_ref);
+    if (tr->failed) {
+        block_put_dirty_discard(super_rw, &super_ref);
+        return false;
+    }
     super_rw->magic = SUPER_BLOCK_MAGIC;
     super_rw->flags = ver;
     super_rw->fs_version = SUPER_BLOCK_FS_VERSION; /* TODO: keep existing fs version when possible */
@@ -125,6 +132,8 @@ void update_super_block(struct transaction *tr,
     tr->fs->written_super_block_version = ver;
 
     block_put_dirty_no_mac(super_rw, &super_ref);
+
+    return true;
 }
 
 /**

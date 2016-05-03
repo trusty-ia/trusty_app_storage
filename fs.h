@@ -74,7 +74,7 @@ struct fs {
     data_block_t reserved_count;
 };
 
-void update_super_block(struct transaction *tr,
+bool update_super_block(struct transaction *tr,
                         const struct block_mac *free,
                         const struct block_mac *files);
 
