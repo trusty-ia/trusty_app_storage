@@ -75,3 +75,10 @@ bool block_mac_eq(const struct transaction *tr,
 {
     return !CRYPTO_memcmp(a, b, block_mac_block_size(tr) + block_mac_mac_size(tr));
 }
+
+void block_mac_copy(const struct transaction *tr,
+                    struct block_mac *dest,
+                    const struct block_mac *src)
+{
+    memcpy(dest, src, block_mac_block_size(tr) + block_mac_mac_size(tr));
+}

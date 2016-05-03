@@ -51,6 +51,9 @@ void block_mac_set_mac(const struct transaction *tr,
 bool block_mac_eq(const struct transaction *tr,
                   const struct block_mac *a,
                   const struct block_mac *b);
+void block_mac_copy(const struct transaction *tr,
+                    struct block_mac *dest,
+                    const struct block_mac *src);
 
 static inline bool block_mac_valid(const struct transaction *tr,
                                    const struct block_mac *block_mac)
