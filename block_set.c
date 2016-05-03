@@ -38,6 +38,10 @@
 static void block_range_init_from_path(struct block_range *range,
                                        struct block_tree_path *path)
 {
+    if (!path->count) {
+        block_range_clear(range);
+        return;
+    }
     range->start = block_tree_path_get_key(path);
     range->end = block_tree_path_get_data(path);
     assert(!range->end == !range->start);
@@ -619,10 +623,6 @@ static void block_set_tree_insert_range(struct transaction *tr,
     assert(!block_range_empty(range));
 
     block_tree_walk(tr, &set->block_tree, range.start - 1, true, &path);
-    if (tr->failed) {
-        pr_err("transaction failed, abort\n");
-        return;
-    }
     block_range_init_from_path(&tree_range, &path);
 
     if (!block_range_empty(tree_range) && tree_range.end < range.start) {
@@ -636,6 +636,10 @@ static void block_set_tree_insert_range(struct transaction *tr,
             block_range_init_from_path(&tree_range, &path);
         }
     }
+    if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
+        return;
+    }
 
     assert(!tree_range.end || !block_range_overlap(tree_range, range));
     new_tree_range = tree_range;
@@ -645,6 +649,10 @@ static void block_set_tree_insert_range(struct transaction *tr,
         block_tree_insert(tr, &set->block_tree, range.start, range.end); /* TODO: use path for insert point */
     } else {
         block_tree_path_next(&path);
+        if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
+            return;
+        }
         merge = block_tree_path_get_key(&path) == new_tree_range.end;
         if (merge) {
             assert(block_tree_path_get_data(&path) > new_tree_range.end);
@@ -653,6 +661,10 @@ static void block_set_tree_insert_range(struct transaction *tr,
         block_tree_update(tr, &set->block_tree,
                           tree_range.start, tree_range.end,
                           new_tree_range.start, new_tree_range.end); /* TODO: use path? */
+        if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
+            return;
+        }
         if (merge) {
             /* set has overlapping ranges at this point, TODO: check that set is readable in this state */
             block_tree_remove(tr, &set->block_tree,
@@ -685,13 +697,14 @@ static void block_set_tree_remove_range(struct transaction *tr,
     full_assert(block_set_check(tr, set));
 
     block_tree_walk(tr, &set->block_tree, range.start, true, &path);
+    block_range_init_from_path(&tree_range, &path);
+
     if (tr->failed) {
-        pr_err("transaction failed, abort\n");
+        pr_warn("transaction failed, abort\n");
         return;
     }
-    assert(path.count > 0);
 
-    block_range_init_from_path(&tree_range, &path);
+    assert(path.count > 0);
 
     assert(block_range_is_sub_range(tree_range, range));
     new_tree_range = tree_range;
@@ -699,7 +712,7 @@ static void block_set_tree_remove_range(struct transaction *tr,
     if (!shrunk) {
         block_tree_insert(tr, &set->block_tree, range.end, tree_range.end);
         if (tr->failed) {
-            pr_err("transaction failed, abort\n");
+            pr_warn("transaction failed, abort\n");
             return;
         }
         new_tree_range.end = range.start;
@@ -768,7 +781,7 @@ static void block_set_add_updating_ranges(struct transaction *tr,
             }
         }
         if (tr->failed) {
-            pr_err("transaction failed, abort\n");
+            pr_warn("transaction failed, abort\n");
             return;
         }
     }
@@ -790,7 +803,7 @@ void block_set_add_range(struct transaction *tr,
     assert(!block_range_empty(range));
 
     if (tr->failed) {
-        pr_err("transaction failed, ignore\n");
+        pr_warn("transaction failed, ignore\n");
         return;
     }
 
@@ -818,7 +831,7 @@ void block_set_add_range(struct transaction *tr,
                  range.start, range.end - 1);
 
         if (tr->failed) {
-            pr_err("transaction failed, abort\n");
+            pr_warn("transaction failed, abort\n");
             return;
         }
 
@@ -826,7 +839,7 @@ void block_set_add_range(struct transaction *tr,
         block_set_add_updating_ranges(tr, set, true);
 
         if (tr->failed) {
-            pr_err("transaction failed, abort\n");
+            pr_warn("transaction failed, abort\n");
             return;
         }
 
@@ -857,7 +870,7 @@ void block_set_remove_range(struct transaction *tr,
     assert(!block_range_empty(range));
 
     if (tr->failed) {
-        pr_err("transaction failed, ignore\n");
+        pr_warn("transaction failed, ignore\n");
         return;
     }
 
@@ -867,7 +880,7 @@ void block_set_remove_range(struct transaction *tr,
              block_mac_to_block(tr, &set->block_tree.root),
              range.start, range.end - 1, set->updating);
 
-    assert(block_set_range_in_set(tr, set, range));
+    assert(block_set_range_in_set(tr, set, range) || tr->failed);
 
     if (set->updating) {
         block_set_add_removing_range(set, range);
@@ -880,7 +893,7 @@ void block_set_remove_range(struct transaction *tr,
         block_set_tree_remove_range(tr, set, range);
 
         if (tr->failed) {
-            pr_err("transaction failed, abort\n");
+            pr_warn("transaction failed, abort\n");
             return;
         }
 
@@ -888,7 +901,7 @@ void block_set_remove_range(struct transaction *tr,
         block_set_add_updating_ranges(tr, set, false);
 
         if (tr->failed) {
-            pr_err("transaction failed, abort\n");
+            pr_warn("transaction failed, abort\n");
             return;
         }
 

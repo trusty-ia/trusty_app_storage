@@ -25,6 +25,7 @@
 #include "array.h"
 #include "block_allocator.h"
 #include "block_set.h"
+#include "debug.h"
 #include "file.h"
 #include "transaction.h"
 
@@ -121,7 +122,7 @@ static void transaction_merge_free_sets(struct transaction *tr,
             next_block = 0;
         }
         if (tr->failed) {
-            printf("%s: transaction failed, abort\n", __func__);
+            pr_warn("transaction failed, abort\n");
             return;
         }
     }
@@ -228,7 +229,7 @@ void transaction_complete(struct transaction *tr)
     block_set_copy(tr, &new_free_set, &tr->fs->free);
 
     if (tr->failed) {
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         goto err_transaction_failed;
     }
 
@@ -236,16 +237,22 @@ void transaction_complete(struct transaction *tr)
 
     file_transaction_complete(tr, &new_files);
     if (tr->failed) {
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         goto err_transaction_failed;
     }
 
     tr->new_free_set = &new_free_set;
     transaction_merge_free_sets(tr, &new_free_set, &tr->fs->free, &tr->allocated, &tr->freed);
+    if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
+        goto err_transaction_failed;
+    }
 
     if (!transaction_check_free(tr, &new_free_set, tr->fs->reserved_count)) {
-        transaction_fail(tr);
-        printf("%s: transaction would leave fs too full, abort\n", __func__);
+        if (!tr->failed) {
+            transaction_fail(tr);
+        }
+        pr_warn("transaction would leave fs too full, abort\n");
         goto err_transaction_failed;
     }
 
@@ -263,14 +270,14 @@ void transaction_complete(struct transaction *tr)
     }
 
     if (tr->failed) {
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         goto err_transaction_failed;
     }
 
     block_cache_clean_transaction(tr);
 
     if (tr->failed) {
-        printf("%s: transaction failed, abort\n", __func__);
+        pr_warn("transaction failed, abort\n");
         goto err_transaction_failed;
     }
 
@@ -302,7 +309,7 @@ void transaction_complete(struct transaction *tr)
             continue;
         }
         if (block_set_overlap(tr, &tr->freed, &other_tr->freed)) {
-            printf("%s: tr %p, fail conflicting transaction: %p\n", __func__, tr, other_tr);
+            pr_warn("tr %p, fail conflicting transaction: %p\n", tr, other_tr);
             transaction_fail(other_tr);
         }
     }

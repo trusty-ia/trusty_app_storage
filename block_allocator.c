@@ -48,6 +48,9 @@ static data_block_t find_free_block(struct transaction *tr,
     block = min_block;
     do {
         block = block_set_find_next_block(tr, &tr->fs->free, block, true);
+        if (tr->failed) {
+            return 0;
+        }
         if (block < min_block) {
             assert(!block);
 
@@ -80,6 +83,9 @@ static data_block_t find_free_block(struct transaction *tr,
         assert(!list_is_empty(&tr->fs->allocated));
         list_for_every_entry(&tr->fs->allocated, set, struct block_set, node) {
             block = block_set_find_next_block(tr, set, block, false);
+            if (tr->failed) {
+                return 0;
+            }
             assert(block >= min_block);
         };
     } while (block != min_block);
@@ -108,7 +114,7 @@ data_block_t block_allocate_etc(struct transaction *tr, bool is_tmp)
     data_block_t min_block;
 
     if (tr->failed) {
-        pr_err("transaction failed, abort\n");
+        pr_warn("transaction failed, abort\n");
 
         return 0;
     }
@@ -130,10 +136,10 @@ data_block_t block_allocate_etc(struct transaction *tr, bool is_tmp)
     if (!block) {
         block = find_free_block(tr, 0);
         if (!block) {
-            pr_err("no space\n");
-
-            transaction_fail(tr);
-
+            if (!tr->failed) {
+                pr_err("no space\n");
+                transaction_fail(tr);
+            }
             return 0;
         }
     }
@@ -155,6 +161,10 @@ data_block_t block_allocate_etc(struct transaction *tr, bool is_tmp)
             block_set_remove_block(tr, tr->new_free_set, block);
             tr->last_free_block = block + 1;
         }
+    }
+
+    if (tr->failed) {
+        return 0;
     }
 
     return block;

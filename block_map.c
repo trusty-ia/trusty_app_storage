@@ -19,6 +19,7 @@
 #include "block_allocator.h"
 #include "block_map.h"
 #include "block_tree.h"
+#include "debug.h"
 #include "transaction.h"
 
 static bool print_block_map;
@@ -92,9 +93,16 @@ void block_map_set(struct transaction *tr, struct block_map *block_map,
 
     index++; /* 0 is not a valid block tree key */
 
-    assert(!tr->failed);
+    if (tr->failed) {
+        pr_warn("transaction failed, ignore\n");
+        return;
+    }
 
     block_tree_walk(tr, &block_map->tree, index, false, &path);
+    if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
+        return;
+    }
     if (block_tree_path_get_key(&path) == index) {
         if (print_block_map) {
             printf("%s: block_map at %lld: remove existing entry at %lld\n",
@@ -102,7 +110,8 @@ void block_map_set(struct transaction *tr, struct block_map *block_map,
         }
         block_tree_remove(tr, &block_map->tree, index, block_tree_path_get_data(&path));
         if (tr->failed) {
-            goto err_transaction_failed;
+            pr_warn("transaction failed, abort\n");
+            return;
         }
     }
     if (block_mac && block_mac_valid(tr, block_mac)) {
@@ -114,11 +123,6 @@ void block_map_set(struct transaction *tr, struct block_map *block_map,
         block_tree_insert(tr, &block_map->tree, index, block_mac_to_block(tr, block_mac));
         /* TODO: insert mac */
     }
-
-    return;
-
-err_transaction_failed:
-    printf("%s: transaction failed, abort\n", __func__);
 }
 
 /**
@@ -137,6 +141,11 @@ void block_map_put_dirty(struct transaction *tr, struct block_map *block_map,
     index++; /* 0 is not a valid block tree key */
 
     block_tree_walk(tr, &block_map->tree, index, false, &path);
+    if (tr->failed) {
+        pr_warn("transaction failed\n");
+        block_put_dirty_discard(data, data_ref);
+        return;
+    }
 
     if (print_block_map) {
         printf("%s: %lld (found key %lld)\n",
@@ -168,6 +177,10 @@ void block_map_truncate(struct transaction *tr,
 
     while (true) {
         block_tree_walk(tr, &block_map->tree, curr_index, false, &path);
+        if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
+            return;
+        }
         key = block_tree_path_get_key(&path);
         if (!key) {
             break;
@@ -183,21 +196,19 @@ void block_map_truncate(struct transaction *tr,
         assert(data);
         block_tree_remove(tr, &block_map->tree, key, data);
         if (tr->failed) {
-            goto err_transaction_failed;
+            pr_warn("transaction failed, abort\n");
+            return;
         }
         block_discard_dirty_by_block(tr->fs->dev, data);
         block_free(tr, data);
         if (tr->failed) {
-            goto err_transaction_failed;
+            pr_warn("transaction failed, abort\n");
+            return;
         }
     }
 
     /* Only a root leaf node should remain if truncating to 0 */
     assert(index || path.count == 1);
-    return;
-
-err_transaction_failed:
-    printf("%s: transaction failed, abort\n", __func__);
 }
 
 /**
@@ -222,15 +233,12 @@ void block_map_free(struct transaction *tr, struct block_map *block_map)
 
     block_map_truncate(tr, block_map, 0);
     if (tr->failed) {
-        goto err_transaction_failed;
+        pr_warn("transaction failed\n");
+        return;
     }
 
     root_block = block_mac_to_block(tr, &block_map->tree.root);
 
     block_discard_dirty_by_block(tr->fs->dev, root_block);
     block_free(tr, root_block);
-    return;
-
-err_transaction_failed:
-    printf("%s: transaction failed, abort\n", __func__);
 }

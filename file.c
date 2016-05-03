@@ -108,8 +108,13 @@ void file_block_map_init(struct transaction *tr,
     return;
 
 err:
-    pr_err("can't read file entry at %lld\n", block_mac_to_block(tr, file));
-    transaction_fail(tr);
+    if (tr->failed) {
+        pr_warn("can't read file entry at %lld, transaction failed\n",
+                block_mac_to_block(tr, file));
+    } else {
+        pr_err("can't read file entry at %lld\n", block_mac_to_block(tr, file));
+        transaction_fail(tr);
+    }
 }
 
 /**
@@ -182,28 +187,41 @@ static void file_block_map_update(struct transaction *tr,
     struct block_tree_path tree_path;
 
     if (tr->failed) {
-        pr_err("transaction failed, abort\n");
+        pr_warn("transaction failed, abort\n");
         return;
     }
 
     assert(block_mac_valid(tr, &file->block_mac));
 
     file_entry_ro = block_get(tr, &file->block_mac, NULL, file_entry_ref);
+    if (!file_entry_ro) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
+        return;
+    }
     assert(file_entry_ro);
     found = file_tree_lookup(&block_mac, tr, &tr->files_added, &tree_path,
                              file_entry_ro->path, false);
     if (!found) {
         found = file_tree_lookup(&block_mac, tr, &tr->fs->files, &tree_path,
                                  file_entry_ro->path, false);
+        if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
+            goto err;
+        }
         assert(found);
         old_block = block_mac_to_block(tr, &block_mac);
         file_block = block_mac_to_block(tr, &file->block_mac);
         if (transaction_block_need_copy(tr, file_block)) {
+            if (tr->failed) {
+                pr_warn("transaction failed, abort\n");
+                goto err;
+            }
             assert(block_map->tree.root_block_changed || file->size != file_entry_ro->size);
             assert(old_block == file_block);
             new_block = block_allocate(tr);
             if (tr->failed) {
-                pr_err("transaction failed, abort\n");
+                pr_warn("transaction failed, abort\n");
                 goto err;
             }
             assert(new_block);
@@ -220,6 +238,10 @@ static void file_block_map_update(struct transaction *tr,
             block_put(file_entry_ro, file_entry_ref);
             file_entry_ro = file_entry_rw;
             file_entry_ref = &file_entry_copy_ref;
+            if (tr->failed) {
+                pr_warn("transaction failed, abort\n");
+                goto err;
+            }
             block_tree_insert(tr, &tr->files_updated, file_block, new_block); /* TODO: insert mac */
             block_free(tr, file_block);
             file->block_mac = block_mac;
@@ -228,6 +250,10 @@ static void file_block_map_update(struct transaction *tr,
                                  file_entry_ro->path, false));
 
         block_tree_walk(tr, &tr->files_updated, old_block, false, &tree_path); /* TODO: get path from insert operation */
+        if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
+            goto err;
+        }
         assert(block_tree_path_get_key(&tree_path) == old_block);
         block_mac = block_tree_path_get_data_block_mac(&tree_path);
         assert(block_mac_to_block(tr, &block_mac) == block_mac_to_block(tr, &file->block_mac));
@@ -259,7 +285,11 @@ static void file_block_map_update(struct transaction *tr,
     return;
 
 err:
-    block_put(file_entry_ro, file_entry_ref);
+    if (file_entry_rw) {
+        block_put_dirty_discard(file_entry_rw, file_entry_ref);
+    } else {
+        block_put(file_entry_ro, file_entry_ref);
+    }
 }
 
 /**
@@ -302,11 +332,13 @@ static const void *file_get_block_etc(struct transaction *tr,
     bool dirty = false;
 
     if (tr->failed) {
+        pr_warn("transaction failed, ignore\n");
         goto err;
     }
 
     file_block_map_init(tr, &block_map, &file->block_mac);
     if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
         goto err;
     }
 
@@ -324,6 +356,7 @@ static const void *file_get_block_etc(struct transaction *tr,
     if (write && (!found || transaction_block_need_copy(tr, old_disk_block))) {
         new_block = block_allocate(tr);
         if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
             goto err;
         }
         assert(new_block);
@@ -332,6 +365,7 @@ static const void *file_get_block_etc(struct transaction *tr,
         if (found) {
             data = block_move(tr, data, new_block, false);
             dirty = true;
+            assert(!tr->failed);
             block_free(tr, old_disk_block);
         } else {
             if (read) {
@@ -342,11 +376,16 @@ static const void *file_get_block_etc(struct transaction *tr,
                 data = block_get_no_read(tr, new_block, ref);
             }
         }
+        if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
+            goto err;
+        }
         /* TODO: get new mac */
         assert(!tr->failed);
         block_map_set(tr, &block_map, file_block, &block_mac);
         file_block_map_update(tr, &block_map, file);
         if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
             goto err;
         }
     }
@@ -364,7 +403,6 @@ err:
     } else if (data) {
         block_put(data, ref);
     }
-    pr_err("transaction failed, abort\n");
     return NULL;
 }
 
@@ -453,11 +491,15 @@ void file_set_size(struct transaction *tr,
     size_t file_block_size = get_file_block_size(tr->fs);
 
     if (tr->failed) {
-        pr_err("transaction failed, abort\n");
+        pr_warn("transaction failed, ignore\n");
         return;
     }
 
     file_block_map_init(tr, &block_map, &file->block_mac);
+    if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
+        return;
+    }
     if (size == file->size) {
         return;
     }
@@ -503,17 +545,28 @@ static bool file_tree_lookup(struct block_mac *block_mac_out,
     while (block_tree_path_get_key(tree_path) == hash) {
         block_mac = block_tree_path_get_data_block_mac(tree_path);
         if (!block_mac_to_block(tr, &block_mac)) {
-            pr_warn("got 0 block pointer for hash %lld while looking for %s, hash 0x%llx\n",
-                    block_tree_path_get_key(tree_path), file_path, hash);
-            block_tree_print(tr, tree);
+            if (LOCAL_TRACE >= TRACE_LEVEL_WARNING) {
+                pr_warn("got 0 block pointer for hash %lld while looking for %s, hash 0x%llx\n",
+                        block_tree_path_get_key(tree_path), file_path, hash);
+                block_tree_print(tr, tree);
+            }
             block_tree_path_next(tree_path);
             block_mac = block_tree_path_get_data_block_mac(tree_path);
             pr_warn("next %lld, hash 0x%llx\n",
                     block_mac_to_block(tr, &block_mac),
                     block_tree_path_get_key(tree_path));
         }
+        if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
+            return false;
+        }
         assert(block_mac_to_block(tr, &block_mac));
         file_entry = block_get(tr, &block_mac, NULL, &file_entry_ref);
+        if (!file_entry) {
+            assert(tr->failed);
+            pr_warn("transaction failed, abort\n");
+            return false;
+        }
         assert(file_entry);
         assert(file_entry->magic == FILE_ENTRY_MAGIC);
         found = !strcmp(file_path, file_entry->path);
@@ -568,6 +621,7 @@ static bool file_create(struct block_mac *block_mac_out,
              path, hash, block);
 
     if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
         goto err;
     }
 
@@ -579,14 +633,18 @@ static bool file_create(struct block_mac *block_mac_out,
     file_entry->magic = FILE_ENTRY_MAGIC;
     strcpy(file_entry->path, path);
     block_put_dirty(tr, file_entry, &file_entry_ref, block_mac_out, NULL);
+    if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
+        goto err;
+    }
     block_tree_insert_block_mac(tr, &tr->files_added, hash, *block_mac_out);
     if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
         goto err;
     }
     return true;
 
 err:
-    pr_err("%s: transaction failed, abort\n", __func__);
     return false;
 }
 
@@ -737,6 +795,11 @@ found:
     }
 created:
     file_entry_ro = block_get(tr, &block_mac, NULL, &file_entry_ref);
+    if (!file_entry_ro) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
+        return false;
+    }
     assert(file_entry_ro);
     list_add_head(&tr->open_files, &file->node);
     file->committed_block_mac = committed_block_mac;
@@ -794,6 +857,11 @@ bool file_delete(struct transaction *tr, const char *path)
              path, block_mac_to_block(tr, &block_mac));
 
     file_entry = block_get(tr, &block_mac, NULL, &file_entry_ref);
+    if (!file_entry) {
+        assert(tr->failed);
+        pr_warn("transaction failed, abort\n");
+        return false;
+    }
     assert(file_entry);
     assert(!strcmp(file_entry->path, path));
     block_map_init(tr, &block_map, &file_entry->block_map,
@@ -807,6 +875,10 @@ bool file_delete(struct transaction *tr, const char *path)
             block_tree_remove(tr, &tr->files_updated,
                               block_mac_to_block(tr, &old_block_mac),
                               block_mac_to_block(tr, &block_mac)); /* TODO: pass mac */
+            if (tr->failed) {
+                pr_warn("transaction failed, abort\n");
+                return false;
+            }
         }
         block_tree_insert_block_mac(tr,&tr->files_removed,
                                     block_mac_to_block(tr, &old_block_mac),
@@ -854,6 +926,11 @@ void file_transaction_complete(struct transaction *tr,
             break;
         }
         file_entry_ro = block_get(tr, &file, NULL, &file_entry_ref);
+        if (!file_entry_ro) {
+            assert(tr->failed);
+            pr_warn("transaction failed, abort\n");
+            return;
+        }
         assert(file_entry_ro);
         block_mac_set_block(tr, &old_file, block_tree_path_get_key(&tree_path));
 
@@ -866,7 +943,7 @@ void file_transaction_complete(struct transaction *tr,
         block_put(file_entry_ro, &file_entry_ref);
 
         if (tr->failed) {
-            pr_err("transaction failed, abort\n");
+            pr_warn("transaction failed, abort\n");
             return;
         }
 
@@ -875,7 +952,7 @@ void file_transaction_complete(struct transaction *tr,
                                     hash, file);
 
         if (tr->failed) {
-            pr_err("transaction failed, abort\n");
+            pr_warn("transaction failed, abort\n");
             return;
         }
 
@@ -890,6 +967,11 @@ void file_transaction_complete(struct transaction *tr,
             break;
         }
         file_entry_ro = block_get(tr, &file, NULL, &file_entry_ref);
+        if (!file_entry_ro) {
+            assert(tr->failed);
+            pr_warn("transaction failed, abort\n");
+            return;
+        }
         assert(file_entry_ro);
 
         pr_write("delete file at %lld, %s\n",
@@ -900,7 +982,7 @@ void file_transaction_complete(struct transaction *tr,
         block_put(file_entry_ro, &file_entry_ref);
 
         if (tr->failed) {
-            pr_err("transaction failed, abort\n");
+            pr_warn("transaction failed, abort\n");
             return;
         }
 
@@ -915,6 +997,11 @@ void file_transaction_complete(struct transaction *tr,
             break;
         }
         file_entry_ro = block_get(tr, &file, NULL, &file_entry_ref);
+        if (!file_entry_ro) {
+            assert(tr->failed);
+            pr_warn("transaction failed, abort\n");
+            return;
+        }
         assert(file_entry_ro);
         pr_write("add file at %lld, %s\n",
                  block_mac_to_block(tr, &file), file_entry_ro->path);
@@ -931,9 +1018,14 @@ void file_transaction_complete(struct transaction *tr,
         hash = path_hash(tr, file_entry_ro->path);
         block_put(file_entry_ro, &file_entry_ref);
 
+        if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
+            return;
+        }
+
         block_tree_insert_block_mac(tr, &new_files, hash, file);
         if (tr->failed) {
-            pr_err("transaction failed, abort\n");
+            pr_warn("transaction failed, abort\n");
             return;
         }
 
