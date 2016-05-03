@@ -1291,7 +1291,7 @@ void file_transaction_success(struct transaction *tr)
  * @block_mac:  Block and mac of file entry to read.
  * @sz:         Pointer to store file size in.
  *
- * Return: %true if file entry could be read, %false otherwise.
+ * Return: %true if @sz was set, %false otherwise.
  */
 static bool file_read_size(struct transaction *tr,
                            const struct block_mac *block_mac,
@@ -1302,10 +1302,10 @@ static bool file_read_size(struct transaction *tr,
 
     if (!block_mac_valid(tr, block_mac)) {
          *sz = 0;
-         return false;
+         return true;
     }
 
-    file_entry_ro = block_get(tr, block_mac, NULL, &ref);
+    file_entry_ro = block_get_no_tr_fail(tr, block_mac, NULL, &ref);
     if (!file_entry_ro) {
         return false;
     }
@@ -1324,13 +1324,20 @@ static bool file_read_size(struct transaction *tr,
 void file_transaction_failed(struct transaction *tr)
 {
     struct file_handle *file;
+    bool success;
 
     list_for_every_entry(&tr->open_files, file, struct file_handle, node) {
         file->used_by_tr = false;
         if (transaction_changed_file(tr, file)) {
             file->block_mac = file->committed_block_mac;
-            file_read_size(tr, &file->block_mac, &file->size);
-            /* TODO: handle errors. Clear file handle? Signal error to client? */
+            success = file_read_size(tr, &file->block_mac, &file->size);
+            if (!success) {
+                pr_warn("failed to read block %lld, clear file handle\n",
+                        block_mac_to_block(tr, &file->block_mac));
+                block_mac_clear(tr, &file->block_mac);
+                block_mac_clear(tr, &file->committed_block_mac);
+                file->size = 0;
+            }
         }
     }
 }
