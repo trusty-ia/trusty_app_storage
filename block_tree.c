@@ -1087,6 +1087,24 @@ bool block_tree_below_min_full(const struct block_tree *tree,
 }
 
 /**
+ * block_tree_node_need_copy - Check if node needs to be copied before write
+ * @tr:         Transaction object.
+ * @tree:       Tree object.
+ * @block_mac:  Block number and mac of node to check.
+ *
+ * Return: %true if @tree is a copy_on_write tree and @block_mac needs to be
+ * copied before the node can be written, %false otherwise.
+ */
+static bool block_tree_node_need_copy(struct transaction *tr,
+                                      const struct block_tree *tree,
+                                      const struct block_mac *block_mac)
+{
+    return tree->copy_on_write &&
+           transaction_block_need_copy(tr, block_mac_to_block(tr, block_mac)) &&
+           !tr->failed;
+}
+
+/**
  * block_tree_node_find_block - Helper function for block_tree_walk
  * @tr:             Transaction object.
  * @tree:           Tree object.
@@ -1450,8 +1468,7 @@ static struct block_tree_node *block_tree_block_dirty(struct transaction *tr,
 
     assert(path_index || block_mac_same_block(tr, block_mac, &path->tree->root));
 
-    if (!path->tree->copy_on_write
-        || !transaction_block_need_copy(tr, block_mac_to_block(tr, block_mac))) {
+    if (!block_tree_node_need_copy(tr, path->tree, block_mac)) {
         return block_dirty(tr, node_ro, !path->tree->allow_copy_on_write);
     }
     assert(path->tree->allow_copy_on_write);
@@ -1558,13 +1575,11 @@ void block_tree_path_put_dirty(struct transaction *tr,
         block_mac = block_tree_node_get_child_data_rw(path->tree, parent_node_rw, index);
 
         /* check that block was copied if needed */
-        assert(!path->tree->copy_on_write ||
-               !transaction_block_need_copy(tr, block_mac_to_block(tr, block_mac)) ||
+        assert(!block_tree_node_need_copy(tr, path->tree, block_mac) ||
                !block_mac_same_block(tr, block_mac, &path->entry[path_index + 1].block_mac));
 
         /* check that block was not copied when not needed */
-        assert((path->tree->copy_on_write &&
-                transaction_block_need_copy(tr, block_mac_to_block(tr, block_mac))) ||
+        assert(block_tree_node_need_copy(tr, path->tree, block_mac) ||
                block_mac_same_block(tr, block_mac, &path->entry[path_index + 1].block_mac));
 
         if (!block_mac_same_block(tr, block_mac, &path->entry[path_index + 1].block_mac)) {
@@ -2199,12 +2214,10 @@ static void block_tree_node_merge(struct transaction *tr,
              printf("%s: transaction failed, abort\n", __func__);
              return;
         }
-        assert(!path->tree->copy_on_write ||
-               !transaction_block_need_copy(tr, block_mac_to_block(tr, &merge_block)));
+        assert(!block_tree_node_need_copy(tr, path->tree, &merge_block));
 
         node_rw = block_dirty(tr, node_ro, !path->tree->copy_on_write);
-        assert(!path->tree->copy_on_write ||
-               !transaction_block_need_copy(tr, block_mac_to_block(tr, block_mac)));
+        assert(!block_tree_node_need_copy(tr, path->tree, block_mac));
 
         if (node_is_left) {
             src_index = 0;
@@ -2292,8 +2305,7 @@ static void block_tree_node_merge(struct transaction *tr,
              printf("%s: transaction failed, abort\n", __func__);
              return;
         }
-        assert(!path->tree->copy_on_write ||
-               !transaction_block_need_copy(tr, block_mac_to_block(tr, left)));
+        assert(!block_tree_node_need_copy(tr, path->tree, left));
 
         index = block_tree_node_get_key_count(path->tree, node_rw);
         if (is_leaf) {
