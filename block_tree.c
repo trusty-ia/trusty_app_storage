@@ -849,6 +849,7 @@ static int block_tree_check_sub_tree(struct transaction *tr,
     int max_empty_count;
     size_t key_count;
     const void *child_data;
+    struct block_mac child_block_mac;
     obj_ref_t ref = OBJ_REF_INITIAL_VALUE(ref);
     bool is_leaf;
 
@@ -935,11 +936,19 @@ static int block_tree_check_sub_tree(struct transaction *tr,
         child_max_key = key;
         if (!is_leaf) {
             child_data = block_tree_node_get_child_data(tree, node_ro, i);
+            block_mac_copy(tr, &child_block_mac, child_data);
+            block_put(node_ro, &ref);
             sub_tree_depth = block_tree_check_sub_tree(tr, tree,
-                                                       child_data, false,
+                                                       &child_block_mac, false,
                                                        child_min_key,
                                                        child_max_key,
                                                        updating);
+            node_ro = block_get(tr, block_mac, NULL, &ref);
+            if (!node_ro) {
+                pr_warn("%3lld: unreadable\n",
+                        block_mac_to_block(tr, block_mac));
+                return -2;
+            }
             if (sub_tree_depth == -1) {
                 goto err;
             }
@@ -965,9 +974,17 @@ static int block_tree_check_sub_tree(struct transaction *tr,
     child_max_key = max_key;
     if (!is_leaf) {
         child_data = block_tree_node_get_child_data(tree, node_ro, last_child);
-        sub_tree_depth = block_tree_check_sub_tree(tr, tree, child_data, false,
+        block_mac_copy(tr, &child_block_mac, child_data);
+        block_put(node_ro, &ref);
+        sub_tree_depth = block_tree_check_sub_tree(tr, tree,
+                                                   &child_block_mac, false,
                                                    child_min_key, child_max_key,
                                                    updating);
+        node_ro = block_get(tr, block_mac, NULL, &ref);
+        if (!node_ro) {
+            pr_warn("%3lld: unreadable\n", block_mac_to_block(tr, block_mac));
+            return -2;
+        }
         if (sub_tree_depth == -1) {
             goto err;
         }
