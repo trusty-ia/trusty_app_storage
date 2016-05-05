@@ -38,6 +38,8 @@ struct block_mac {
 
 struct transaction;
 
+void block_mac_clear(const struct transaction *tr,
+                     struct block_mac *dest);
 data_block_t block_mac_to_block(const struct transaction *tr,
                                 const struct block_mac *block_mac);
 const void *block_mac_to_mac(const struct transaction *tr,

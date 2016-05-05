@@ -37,6 +37,12 @@ static size_t block_mac_mac_size(const struct transaction *tr)
     return size;
 }
 
+void block_mac_clear(const struct transaction *tr,
+                     struct block_mac *dest)
+{
+    memset(dest, 0, block_mac_block_size(tr) + block_mac_mac_size(tr));
+}
+
 data_block_t block_mac_to_block(const struct transaction *tr,
                                 const struct block_mac *block_mac)
 {
