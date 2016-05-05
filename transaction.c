@@ -323,6 +323,9 @@ void transaction_complete(struct transaction *tr)
     block_cache_discard_transaction(tr, false);
 
 err_transaction_failed:
+    if (tr->failed) {
+        file_transaction_complete_failed(tr);
+    }
     assert(!block_cache_debug_get_ref_block_count());
 }
 

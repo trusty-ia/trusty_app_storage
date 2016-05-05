@@ -802,6 +802,7 @@ created:
     }
     assert(file_entry_ro);
     list_add_head(&tr->open_files, &file->node);
+    file->to_commit_block_mac = committed_block_mac;
     file->committed_block_mac = committed_block_mac;
     file->block_mac = block_mac;
     file->size = file_entry_ro->size;
@@ -896,6 +897,185 @@ bool file_delete(struct transaction *tr, const char *path)
 }
 
 /**
+ * file_for_each_open - Call function for every open file in every transaction
+ * @tr:         Transaction object.
+ * @func:       Function to call.
+ */
+static void file_for_each_open(struct transaction *tr,
+                               void (*func)(struct transaction *tr,
+                                            struct transaction *file_tr,
+                                            struct file_handle *file))
+{
+    struct transaction *tmp_tr;
+    struct transaction *other_tr;
+    struct file_handle *file;
+
+    list_for_every_entry_safe(&tr->fs->transactions, other_tr, tmp_tr, struct transaction, node) {
+        list_for_every_entry(&other_tr->open_files, file, struct file_handle, node) {
+            func(tr, other_tr, file);
+        }
+    }
+}
+
+/**
+ * file_restore_to_commit - Restore to_commit state to commited state
+ * @tr:         Current transaction.
+ * @file_tr:    Transaction that @file was found in.
+ * @file:       File handle object.
+ */
+static void file_restore_to_commit(struct transaction *tr,
+                                   struct transaction *file_tr,
+                                   struct file_handle *file)
+{
+    struct block_mac *src = &file->committed_block_mac;
+    struct block_mac *dest = &file->to_commit_block_mac;
+    if (block_mac_same_block(tr, src, dest)) {
+        assert(block_mac_eq(tr, src, dest));
+        return;
+    }
+    pr_write("file handle %p, abort block %lld/%lld -> %lld, size %lld -> %lld\n",
+             file,
+             block_mac_to_block(tr, &file->committed_block_mac),
+             block_mac_to_block(tr, &file->block_mac),
+             block_mac_to_block(tr, &file->to_commit_block_mac),
+             file->size, file->to_commit_size);
+    block_mac_copy(tr, dest, src);
+}
+
+/**
+ * file_apply_to_commit - Apply to_commit state
+ * @tr:         Current transaction.
+ * @file_tr:    Transaction that @file was found in.
+ * @file:       File handle object.
+ *
+ * Copies to_commit to commited and current state and fails conflicting
+ * transactions.
+ */
+static void file_apply_to_commit(struct transaction *tr,
+                                 struct transaction *file_tr,
+                                 struct file_handle *file)
+{
+    struct block_mac *src = &file->to_commit_block_mac;
+    struct block_mac *dest = &file->committed_block_mac;
+
+    if (block_mac_same_block(tr, src, dest)) {
+        assert(block_mac_eq(tr, src, dest));
+        pr_write("file handle %p, unchanged file at %lld\n",
+                 file, block_mac_to_block(tr, &file->committed_block_mac));
+        return;
+    }
+
+    if (file_tr != tr && !block_mac_same_block(tr, dest, &file->block_mac)) {
+        /* TODO: check flag in file instead to also fail conflicting reads */
+        pr_warn("file handle %p, conflict %lld != %lld\n", file,
+                block_mac_to_block(tr, &file->committed_block_mac),
+                block_mac_to_block(tr, &file->block_mac));
+        assert(!file_tr->failed);
+        transaction_fail(file_tr);
+        assert(block_mac_same_block(tr, dest, &file->block_mac));
+    }
+
+    pr_write("file handle %p, apply block %lld/%lld -> %lld, size %lld -> %lld\n",
+             file,
+             block_mac_to_block(tr, &file->committed_block_mac),
+             block_mac_to_block(tr, &file->block_mac),
+             block_mac_to_block(tr, &file->to_commit_block_mac),
+             file->size, file->to_commit_size);
+
+    block_mac_copy(tr, dest, src);
+    if (tr == file_tr) {
+        assert(block_mac_eq(tr, &file->block_mac, src));
+        assert(file->size == file->to_commit_size);
+    } else {
+        block_mac_copy(tr, &file->block_mac, src);
+        file->size = file->to_commit_size;
+    }
+}
+
+/**
+ * file_transaction_complete_failed - Restore open files state
+ * @tr:                     Transaction object.
+ *
+ * Revert open file changes done by file_transaction_complete.
+ */
+void file_transaction_complete_failed(struct transaction *tr)
+{
+    file_for_each_open(tr, file_restore_to_commit);
+}
+
+/**
+ * file_update_block_mac_tr - Update open files with committed changes
+ * @tr:                 Current transaction object.
+ * @other_tr:           Transaction object to find files in.
+ * @old_block_mac:      Block and mac of committed file.
+ * @old_block_no_mac:   %true if @old_block_mac->max is invalid.
+ * @new_block_mac:      New block and mac.
+ * @new_size:           New size.
+ *
+ * Prepare update of open files referring to the file at @old_block_mac.
+ */
+static void file_update_block_mac_tr(struct transaction *tr,
+                                     struct transaction *other_tr,
+                                     const struct block_mac *old_block_mac,
+                                     bool old_block_no_mac,
+                                     const struct block_mac *new_block_mac,
+                                     data_block_t new_size)
+{
+    struct file_handle *file;
+
+    assert(block_mac_valid(tr, old_block_mac) || other_tr == tr);
+    list_for_every_entry(&other_tr->open_files, file, struct file_handle, node) {
+        if (!block_mac_same_block(tr, &file->committed_block_mac, old_block_mac) ||
+            (!block_mac_valid(tr, &file->committed_block_mac) &&
+             !block_mac_same_block(tr, &file->block_mac, new_block_mac))) {
+            pr_write("file handle %p, unrelated %lld != %lld\n",
+                     file, block_mac_to_block(tr, &file->committed_block_mac),
+                     block_mac_to_block(tr, new_block_mac));
+            continue; /*unrelated file */
+        }
+        assert(old_block_no_mac ||
+               block_mac_eq(tr, &file->committed_block_mac, old_block_mac));
+
+        pr_write("file handle %p, stage block %lld/%lld -> %lld, size %lld -> %lld\n",
+                 file,
+                 block_mac_to_block(tr, &file->committed_block_mac),
+                 block_mac_to_block(tr, &file->block_mac),
+                 block_mac_to_block(tr, new_block_mac),
+                 file->size, new_size);
+
+        block_mac_copy(tr, &file->to_commit_block_mac, new_block_mac);
+        file->to_commit_size = new_size;
+    }
+}
+
+/**
+ * file_update_block_mac_all - Update open files with committed changes
+ * @tr:                 Transaction object.
+ * @old_block_mac:      Block and mac of committed file.
+ * @old_block_no_mac:   %true if @old_block_mac->max is invalid.
+ * @new_block_mac:      New block and mac.
+ * @new_size:           New size.
+ *
+ * Update other open files referring to the same file as @src_file with the
+ * size, block and mac from @src_file.
+ */
+static void file_update_block_mac_all(struct transaction *tr,
+                                      const struct block_mac *old_block_mac,
+                                      bool old_block_no_mac,
+                                      const struct block_mac *new_block_mac,
+                                      data_block_t new_size)
+{
+    struct transaction *tmp_tr;
+    struct transaction *other_tr;
+
+    list_for_every_entry_safe(&tr->fs->transactions, other_tr, tmp_tr,
+                              struct transaction, node) {
+        file_update_block_mac_tr(tr, other_tr, old_block_mac, old_block_no_mac,
+                                 new_block_mac, new_size);
+    }
+}
+
+/**
  * file_transaction_complete - Update files
  * @tr:                     Transaction object.
  * @new_files_block_mac:    Object to return block and mac of updated file tree
@@ -916,6 +1096,7 @@ void file_transaction_complete(struct transaction *tr,
     struct block_mac file;
     struct block_tree new_files;
     data_block_t hash;
+    const struct block_mac clear_block_mac = BLOCK_MAC_INITIAL_VALUE(clear);
 
     block_tree_copy(&new_files, &tr->fs->files);
 
@@ -937,6 +1118,9 @@ void file_transaction_complete(struct transaction *tr,
         pr_write("update file at %lld -> %lld, %s\n",
                  block_mac_to_block(tr, &old_file),
                  block_mac_to_block(tr, &file), file_entry_ro->path);
+
+        file_update_block_mac_all(tr, &old_file, true,
+                                  &file, file_entry_ro->size);
 
         hash = path_hash(tr, file_entry_ro->path);
 
@@ -977,6 +1161,8 @@ void file_transaction_complete(struct transaction *tr,
         pr_write("delete file at %lld, %s\n",
                  block_mac_to_block(tr, &file), file_entry_ro->path);
 
+        file_update_block_mac_all(tr, &file, false, &clear_block_mac, 0);
+
         found = file_tree_lookup(&old_file, tr, &new_files,
                                  &tmp_tree_path, file_entry_ro->path, true);
         block_put(file_entry_ro, &file_entry_ref);
@@ -1015,6 +1201,10 @@ void file_transaction_complete(struct transaction *tr,
             transaction_fail(tr);
             return;
         }
+
+        file_update_block_mac_tr(tr, tr, &clear_block_mac, false,
+                                 &file, file_entry_ro->size);
+
         hash = path_hash(tr, file_entry_ro->path);
         block_put(file_entry_ro, &file_entry_ref);
 
@@ -1032,91 +1222,6 @@ void file_transaction_complete(struct transaction *tr,
         block_tree_path_next(&tree_path);
     }
     *new_files_block_mac = new_files.root;
-}
-
-/**
- * file_update_block_mac_all - Update open files with committed changes
- * @tr:         Transaction object.
- * @src_file:   File handle with committed changes.
- *
- * Update other open files referring to the same file as @src_file with the
- * size, block and mac from @src_file.
- */
-static void file_update_block_mac_all(struct transaction *tr,
-                                      struct file_handle *src_file)
-{
-    struct transaction *tmp_tr;
-    struct transaction *other_tr;
-    struct file_handle *file;
-
-    list_for_every_entry_safe(&tr->fs->transactions, other_tr, tmp_tr, struct transaction, node) {
-        if (!block_mac_valid(tr, &src_file->committed_block_mac) && other_tr != tr) {
-            /*
-             * If file was created by current transaction it should not affect
-             * file handles opened in other transactions.
-             */
-            continue;
-        }
-        list_for_every_entry(&other_tr->open_files, file, struct file_handle, node) {
-            if (file == src_file) {
-                continue; /* caller updates src_file */
-            }
-            if (!block_mac_same_block(tr, &file->committed_block_mac, &src_file->committed_block_mac) ||
-                (!block_mac_valid(tr, &file->committed_block_mac) &&
-                 !block_mac_same_block(tr, &file->block_mac, &src_file->block_mac))) {
-                pr_write("file handle %p, unrelated %lld != %lld\n",
-                         file, block_mac_to_block(tr, &file->committed_block_mac),
-                         block_mac_to_block(tr, &src_file->committed_block_mac));
-                continue; /*unrelated file */
-            }
-            assert(block_mac_eq(tr, &file->committed_block_mac, &src_file->committed_block_mac));
-            if (!block_mac_same_block(tr, &file->committed_block_mac, &file->block_mac) &&
-                (block_mac_valid(tr, &src_file->committed_block_mac) || other_tr != tr)) {
-                pr_write("file handle %p, conflict %lld != %lld\n", file,
-                         block_mac_to_block(tr, &file->committed_block_mac),
-                         block_mac_to_block(tr, &file->block_mac));
-                assert(other_tr != tr); /* transaction should not conflict with itself */
-                transaction_fail(other_tr);
-                assert(block_mac_same_block(tr, &file->committed_block_mac, &file->block_mac));
-            }
-
-            pr_write("file handle %p, block %lld/%lld -> %lld, size %lld -> %lld\n",
-                     file,
-                     block_mac_to_block(tr, &file->committed_block_mac),
-                     block_mac_to_block(tr, &file->block_mac),
-                     block_mac_to_block(tr, &src_file->block_mac),
-                     file->size, src_file->size);
-
-            file->block_mac = src_file->block_mac;
-            file->committed_block_mac = src_file->block_mac;
-            file->size = src_file->size;
-        }
-    }
-}
-
-/**
- * file_block_mac_is_valid - Helper function to check if block_mac is valid
- * @tr:         Transaction object.
- * @block_mac:  Block mac to check
- *
- * Return: %true if @block_mac is readable, %false otherwise.
- */
-static bool file_block_mac_is_valid(struct transaction *tr,
-                                    const struct block_mac *block_mac)
-{
-    const void *block_data;
-    obj_ref_t ref = OBJ_REF_INITIAL_VALUE(ref);
-
-    if (!block_mac_valid(tr, block_mac)) {
-        return true; /* Allow deleted files */
-    }
-
-    block_data = block_get(tr, block_mac, NULL, &ref);
-    if (!block_data) {
-        return false;
-    }
-    block_put(block_data, &ref);
-    return true;
 }
 
 /**
@@ -1138,23 +1243,7 @@ static bool transaction_changed_file(struct transaction *tr,
  */
 void file_transaction_success(struct transaction *tr)
 {
-    struct file_handle *file;
-
-    list_for_every_entry(&tr->open_files, file, struct file_handle, node) {
-        if (!transaction_changed_file(tr, file)) {
-            pr_read("file handle %p, unchanged %lld\n",
-                    file, block_mac_to_block(tr, &file->block_mac));
-            continue;
-        }
-        assert(file_block_mac_is_valid(tr, &file->block_mac));
-
-        pr_write("file handle %p, %lld -> %lld\n", file,
-                 block_mac_to_block(tr, &file->committed_block_mac),
-                 block_mac_to_block(tr, &file->block_mac));
-
-        file_update_block_mac_all(tr, file);
-        file->committed_block_mac = file->block_mac;
-    }
+    file_for_each_open(tr, file_apply_to_commit);
 }
 
 /**

@@ -27,8 +27,10 @@ struct transaction;
 
 struct file_handle {
     struct list_node node;
+    struct block_mac to_commit_block_mac;
     struct block_mac committed_block_mac;
     struct block_mac block_mac;
+    data_block_t to_commit_size;
     data_block_t size;
 };
 
@@ -51,6 +53,7 @@ void files_print(struct transaction *tr);
 
 void file_transaction_complete(struct transaction *tr,
                                struct block_mac *new_files_block_mac);
+void file_transaction_complete_failed(struct transaction *tr);
 
 void file_transaction_success(struct transaction *tr);
 void file_transaction_failed(struct transaction *tr);
