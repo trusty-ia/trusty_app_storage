@@ -342,6 +342,8 @@ static const void *file_get_block_etc(struct transaction *tr,
         goto err;
     }
 
+    file->used_by_tr = true;
+
     found = block_map_get(tr, &block_map, file_block, &block_mac);
     if (found) {
         if (read) {
@@ -471,6 +473,35 @@ void file_block_put_dirty(struct transaction *tr,
                         data - sizeof(struct iv), data_ref);
 
     file_block_map_update(tr, &block_map, file);
+}
+
+/**
+ * file_get_size - Get file size
+ * @tr:         Transaction
+ * @file:       File handle object.
+ * @size:       Pointer to return size in.
+ *
+ * Return: %true if @size was set, %false if @size was not set because @file is
+ * invalid or @tr has failed.
+ */
+bool file_get_size(struct transaction *tr,
+                   struct file_handle *file,
+                   data_block_t *size)
+{
+    if (tr->failed) {
+        pr_warn("transaction failed, ignore\n");
+        return false;
+    }
+
+    if (!block_mac_valid(tr, &file->block_mac)) {
+        pr_warn("invalid file handle\n");
+        return false;
+    }
+
+    file->used_by_tr = true;
+    *size = file->size;
+
+    return true;
 }
 
 /**
@@ -806,6 +837,7 @@ created:
     file->committed_block_mac = committed_block_mac;
     file->block_mac = block_mac;
     file->size = file_entry_ro->size;
+    file->used_by_tr = false;
     block_put(file_entry_ro, &file_entry_ref);
 
     return true;
@@ -958,6 +990,10 @@ static void file_apply_to_commit(struct transaction *tr,
     struct block_mac *src = &file->to_commit_block_mac;
     struct block_mac *dest = &file->committed_block_mac;
 
+    if (tr == file_tr) {
+        file->used_by_tr = false;
+    }
+
     if (block_mac_same_block(tr, src, dest)) {
         assert(block_mac_eq(tr, src, dest));
         pr_write("file handle %p, unchanged file at %lld\n",
@@ -965,13 +1001,16 @@ static void file_apply_to_commit(struct transaction *tr,
         return;
     }
 
-    if (file_tr != tr && !block_mac_same_block(tr, dest, &file->block_mac)) {
-        /* TODO: check flag in file instead to also fail conflicting reads */
-        pr_warn("file handle %p, conflict %lld != %lld\n", file,
-                block_mac_to_block(tr, &file->committed_block_mac),
-                block_mac_to_block(tr, &file->block_mac));
-        assert(!file_tr->failed);
-        transaction_fail(file_tr);
+    if (file_tr != tr) {
+        if (file->used_by_tr) {
+            pr_warn("file handle %p, conflict %lld != %lld || used_by_tr %d\n",
+                    file,
+                    block_mac_to_block(tr, &file->committed_block_mac),
+                    block_mac_to_block(tr, &file->block_mac),
+                    file->used_by_tr);
+            assert(!file_tr->failed);
+            transaction_fail(file_tr);
+        }
         assert(block_mac_same_block(tr, dest, &file->block_mac));
     }
 
@@ -1287,6 +1326,7 @@ void file_transaction_failed(struct transaction *tr)
     struct file_handle *file;
 
     list_for_every_entry(&tr->open_files, file, struct file_handle, node) {
+        file->used_by_tr = false;
         if (transaction_changed_file(tr, file)) {
             file->block_mac = file->committed_block_mac;
             file_read_size(tr, &file->block_mac, &file->size);

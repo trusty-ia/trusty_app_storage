@@ -628,6 +628,7 @@ static int storage_file_get_size(struct storage_msg *msg,
                                  struct storage_file_get_size_req *req, size_t req_size,
                                  struct storage_client_session *session)
 {
+	bool valid;
 	struct file_handle *file;
 	enum storage_err result = STORAGE_NO_ERROR;
 	void *out = NULL;
@@ -646,7 +647,13 @@ static int storage_file_get_size(struct storage_msg *msg,
 		goto err_invalid_input;
 	}
 
-	struct storage_file_get_size_resp resp = { .size = file->size };
+	struct storage_file_get_size_resp resp;
+
+	valid = file_get_size(&session->tr, file, &resp.size);
+	if (!valid) {
+		result = STORAGE_ERR_NOT_VALID;
+		goto err_invalid_input;
+	}
 
 	out = &resp;
 	out_size = sizeof(resp);

@@ -32,6 +32,7 @@ struct file_handle {
     struct block_mac block_mac;
     data_block_t to_commit_size;
     data_block_t size;
+    bool used_by_tr;
 };
 
 size_t get_file_block_size(struct fs *fs);
@@ -44,6 +45,9 @@ void file_block_put(const void *data, obj_ref_t *data_ref);
 void file_block_put_dirty(struct transaction *tr,
                           struct file_handle *file, data_block_t file_block,
                           void *data, obj_ref_t *data_ref);
+bool file_get_size(struct transaction *tr,
+                   struct file_handle *file,
+                   data_block_t *size);
 void file_set_size(struct transaction *tr,
                    struct file_handle *file,
                    data_block_t size);
