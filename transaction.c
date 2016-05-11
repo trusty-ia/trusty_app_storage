@@ -295,7 +295,7 @@ void transaction_complete(struct transaction *tr)
         goto err_transaction_failed;
     }
 
-    assert(block_range_empty(new_free_set.inserting_range[0]));
+    assert(block_range_empty(new_free_set.initial_range));
     check_free_tree(tr, &new_free_set);
 
     super_block_updated = update_super_block(tr, &new_free_set.block_tree.root,
@@ -314,7 +314,7 @@ void transaction_complete(struct transaction *tr)
     assert(!tr->failed);
 
     tr->fs->free.block_tree.root = new_free_set.block_tree.root;
-    block_range_clear(&tr->fs->free.inserting_range[0]); /* clear for initial file-system state */
+    block_range_clear(&tr->fs->free.initial_range); /* clear for initial file-system state */
     tr->fs->files.root = new_files;
     tr->fs->super_block_version = tr->fs->written_super_block_version;
 

@@ -35,9 +35,7 @@ extern bool print_lookup; /* TODO: remove */
  * struct block_set - In-memory state of B+ tree backed block set
  * @node:               List node used to link transaction allocated sets in fs.
  * @block_tree:         Block tree state.
- * @inserting_range:    Block ranges added to set but not yet in @block_tree.
- * @removing_range:     Block ranges removed from set but not yet removed from
- *                      @block_tree.
+ * @inserting_range:    Block range added to set but not yet in @block_tree.
  * @updating:           %true while updating the set, %false otherwise. If a
  *                      set insert or remove operation is re-entered while
  *                      @updating is %true, the update is only applied to
@@ -54,16 +52,14 @@ extern bool print_lookup; /* TODO: remove */
 struct block_set {
     struct list_node node;
     struct block_tree block_tree;
-    struct block_range inserting_range[BLOCK_SET_MAX_DEPTH * BLOCK_SET_MAX_DEPTH]; // TODO: calculate smaller max
-    struct block_range removing_range[BLOCK_SET_MAX_DEPTH * BLOCK_SET_MAX_DEPTH];
+    struct block_range initial_range;
     bool updating;
 };
 
 #define BLOCK_SET_INITIAL_VALUE(block_set) { \
     .node = LIST_INITIAL_CLEARED_VALUE, \
     .block_tree = BLOCK_TREE_INITIAL_VALUE(block_set.block_tree), \
-    .inserting_range = {{0}}, \
-    .removing_range = {{0}}, \
+    .initial_range = {0}, \
     .updating = 0, \
 }
 
