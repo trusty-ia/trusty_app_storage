@@ -25,6 +25,11 @@ struct transaction;
 
 data_block_t block_allocate_etc(struct transaction *tr, bool is_tmp);
 void block_free_etc(struct transaction *tr, data_block_t block, bool is_tmp);
+bool block_allocator_allocation_queued(struct transaction *tr,
+                                       data_block_t block,
+                                       bool is_tmp);
+void block_allocator_suspend_set_updates(struct transaction *tr);
+void block_allocator_process_queue(struct transaction *tr);
 
 static inline data_block_t block_allocate(struct transaction *tr)
 {

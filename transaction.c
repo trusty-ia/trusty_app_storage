@@ -109,12 +109,16 @@ static void transaction_merge_free_sets(struct transaction *tr,
         if (block_range_before(delete_range, add_range)) {
             assert(delete_range.start >= next_block);
             tr->min_free_block = delete_range.end;
+            block_allocator_suspend_set_updates(tr);
             block_set_remove_range(tr, new_set, delete_range);
+            block_allocator_process_queue(tr);
             next_block = delete_range.end;
         } else if (!block_range_empty(add_range)) {
             assert(add_range.start >= next_block);
             tr->min_free_block = add_range.end;
+            block_allocator_suspend_set_updates(tr);
             block_set_add_range(tr, new_set, add_range);
+            block_allocator_process_queue(tr);
             next_block = add_range.end;
         } else {
             assert(block_range_empty(delete_range));
@@ -141,8 +145,10 @@ bool transaction_block_need_copy(struct transaction *tr, data_block_t block)
 {
     assert(block);
     assert(!block_set_block_in_set(tr, &tr->tmp_allocated, block));
+    assert(!block_allocator_allocation_queued(tr, block, true));
 
-    return !block_set_block_in_set(tr, &tr->allocated, block);
+    return !block_set_block_in_set(tr, &tr->allocated, block) &&
+           !block_allocator_allocation_queued(tr, block, false);
 }
 
 /**
