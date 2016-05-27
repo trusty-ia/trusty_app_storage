@@ -660,7 +660,7 @@ void block_cache_init(void)
 
     entry = malloc(sizeof(block_cache_entries[0]) * BLOCK_CACHE_SIZE);
     assert(entry);
-    full_assert(memset(entry, ~0, sizeof(block_cache_entries[0]) * BLOCK_CACHE_SIZE));
+    full_assert(memset(entry, 1, sizeof(block_cache_entries[0]) * BLOCK_CACHE_SIZE));
     block_cache_entries = entry;
 
     for (i = 0; i < BLOCK_CACHE_SIZE; i++, entry++) {
@@ -669,6 +669,7 @@ void block_cache_init(void)
         entry->dev = NULL;
         entry->block = ~0;
         entry->dirty = false;
+        entry->dirty_ref = false;
         entry->dirty_mac = false;
         entry->dirty_tr = NULL;
         entry->io_op = BLOCK_CACHE_IO_OP_NONE;
