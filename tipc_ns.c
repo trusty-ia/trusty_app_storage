@@ -64,8 +64,8 @@ int rpmb_send(void *handle_,
               void *write_buf, size_t write_size,
               void *read_buf, size_t read_size, bool sync)
 {
-	SS_DBG_IO("%s: handle %lld, rel_write size %lld, write size %d, read size %d\n",
-		  __func__, handle, reliable_write_size, write_size, read_size);
+	SS_DBG_IO("%s: handle %p, rel_write size %zu, write size %zu, read size %zu\n",
+		  __func__, handle_, reliable_write_size, write_size, read_size);
 
 	int rc;
 	handle_t *handlep = handle_;
@@ -197,7 +197,7 @@ int ns_open_file(handle_t ipc_handle, const char *fname,
 
 void ns_close_file(handle_t ipc_handle, ns_handle_t handle)
 {
-	SS_DBG_IO("close handle: %d\n", handle);
+	SS_DBG_IO("close handle: %llu\n", handle);
 	struct storage_file_close_req req = {
 		.handle = handle,
 	};
@@ -232,7 +232,7 @@ void ns_close_file(handle_t ipc_handle, ns_handle_t handle)
 
 int ns_read_pos(handle_t ipc_handle, ns_handle_t handle, ns_off_t pos, void *data, int data_size)
 {
-	SS_DBG_IO("%s: handle %lld, pos %lld, size %d\n",
+	SS_DBG_IO("%s: handle %llu, pos %llu, size %d\n",
 		  __func__, handle, pos, data_size);
 
 	struct storage_file_read_req req = {
@@ -292,7 +292,7 @@ int ns_read_pos(handle_t ipc_handle, ns_handle_t handle, ns_off_t pos, void *dat
 int ns_write_pos(handle_t ipc_handle, ns_handle_t handle, ns_off_t pos,
                  const void *data, int data_size)
 {
-	SS_DBG_IO("%s: handle %lld, pos %lld, size %d\n",
+	SS_DBG_IO("%s: handle %llu, pos %llu, size %d\n",
 		  __func__, handle, pos, data_size);
 
 	struct storage_file_write_req req = {
