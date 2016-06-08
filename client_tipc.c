@@ -692,12 +692,10 @@ static enum storage_err storage_file_set_size(struct storage_msg *msg,
 	}
 
 	/* check for nop */
-	if (new_size == file->size) {
-		return STORAGE_NO_ERROR;
+	if (new_size != file->size) {
+		/* update size */
+		file_set_size(&session->tr, file, new_size);
 	}
-
-	/* update size */
-	file_set_size(&session->tr, file, new_size);
 
 	/* try to commit */
 	if (msg->flags & STORAGE_MSG_FLAG_TRANSACT_COMPLETE) {
