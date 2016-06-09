@@ -27,8 +27,20 @@ enum {
     TRACE_LEVEL_READ,
 };
 
+#define TRACEFF(f, str, x...) do { fprintf(f, "%s:%d: " str, __PRETTY_FUNCTION__, __LINE__, ## x); } while (0)
+#undef LTRACEF_LEVEL
+#define LTRACEF_LEVEL(level, x...) \
+	do { \
+		if (LOCAL_TRACE >= (level)) { \
+			TRACEFF((LOCAL_TRACE_ERR >= level) ? stderr : stdout, x); \
+		} \
+	} while (0)
+
 #ifndef LOCAL_TRACE
 #define LOCAL_TRACE TRACE_LEVEL_WARNING
+#endif
+#ifndef LOCAL_TRACE_ERR
+#define LOCAL_TRACE_ERR TRACE_LEVEL_ERROR
 #endif
 
 #define pr_err(x...) LTRACEF_LEVEL(TRACE_LEVEL_ERROR, x)

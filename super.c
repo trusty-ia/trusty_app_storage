@@ -22,7 +22,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifndef LOCAL_TRACE
 #define LOCAL_TRACE TRACE_LEVEL_INIT
+#endif
+#ifndef LOCAL_TRACE_ERR
+#define LOCAL_TRACE_ERR TRACE_LEVEL_INIT
+#endif
 
 #include "array.h"
 #include "block_allocator.h"
