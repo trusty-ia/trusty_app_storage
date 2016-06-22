@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <trusty_ipc.h>
+#include <trusty_std.h>
 
 #include <interface/storage/storage.h>
 
@@ -233,14 +234,40 @@ int block_device_tipc_init(struct block_device_tipc *state,
     uint32_t rpmb_part1_block_count = 2;
     uint16_t rpmb_part1_base = 1; /* TODO: change to 0 and overwrite old fs */
     uint16_t rpmb_part2_base = rpmb_part1_base + rpmb_part1_block_count;
+    uint32_t write_counter = 0;
+    uint16_t result = -1;
+    trusty_device_info_t dev_info = {0};
 
     state->ipc_handle = ipc_handle;
+
+    /* manuf_mode==1: LC_STATE_MANUFACTURING; manuf_mode==0: LC_STATE_ENDUSER
+      deviceLocked  0: unlocked, 1: locked, others not used */
+    ret = get_device_info(&dev_info, false);
+    SS_WARN("get_device_info ret is %d, deviceLocked is %d. state is 0x%x, manuf_mode is %d.\n",
+        ret, dev_info.rot.deviceLocked, dev_info.state.data, dev_info.state.field.manuf_mode );
 
     /* init rpmb */
     ret = rpmb_init(&state->rpmb_state, &state->ipc_handle, rpmb_key);
     if (ret < 0) {
         SS_ERR("%s: rpmb_init failed (%d)\n", __func__, ret);
         goto err_rpmb_init;
+    }
+
+    ret = rpmb_read_counter(state->rpmb_state, &write_counter, &result);
+    SS_DBG_IO("rpmb_read_counter ret is %d, write counter is %d.\n", ret, write_counter);
+
+    if (ret < 0) {
+        if(result != RPMB_RES_NO_AUTH_KEY)
+        {
+            SS_ERR("%s: rpmb_read_counter failed (%d), result is 0x%X.\n", __func__, ret, result);
+            goto err_read_counter;
+        }
+        SS_ERR("%s: start to rpmb_program_key.\n", __func__);
+        ret = rpmb_program_key(state->rpmb_state);
+        if (ret < 0) {
+            SS_ERR("%s: rpmb_program_key failed (%d)\n", __func__, ret);
+            goto err_program_key;
+        }
     }
 
     if (BLOCK_COUNT_RPMB) {
@@ -254,6 +281,9 @@ int block_device_tipc_init(struct block_device_tipc *state,
         rpmb_block_count = rpmb_search_size(state, 0); /* TODO: get hint from ns */
         rpmb_block_count /= BLOCK_SIZE_RPMB_BLOCKS;
     }
+
+    SS_DBG_IO("rpmb_block_count is %d.\n", rpmb_block_count);
+
     if (rpmb_block_count < rpmb_part2_base) {
         SS_ERR("%s: bad rpmb size, %d\n", __func__, rpmb_block_count);
         goto err_bad_rpmb_size;
@@ -336,6 +366,8 @@ err_fs_rpmb_create_port:
 err_init_tr_state_rpmb:
     rpmb_uninit(state->rpmb_state);
 err_bad_rpmb_size:
+err_read_counter:
+err_program_key:
 err_rpmb_init:
     return ret;
 }

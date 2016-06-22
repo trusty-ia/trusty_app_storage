@@ -25,6 +25,19 @@ struct rpmb_state;
 
 #define RPMB_BUF_SIZE 256
 
+enum rpmb_result {
+    RPMB_RES_OK                         = 0x0000,
+    RPMB_RES_GENERAL_FAILURE            = 0x0001,
+    RPMB_RES_AUTH_FAILURE               = 0x0002,
+    RPMB_RES_COUNT_FAILURE              = 0x0003,
+    RPMB_RES_ADDR_FAILURE               = 0x0004,
+    RPMB_RES_WRITE_FAILURE              = 0x0005,
+    RPMB_RES_READ_FAILURE               = 0x0006,
+    RPMB_RES_NO_AUTH_KEY                = 0x0007,
+
+    RPMB_RES_WRITE_COUNTER_EXPIRED      = 0x0080,
+};
+
 /* provides */
 int rpmb_init(struct rpmb_state **statep,
               void *mmc_handle,
@@ -32,6 +45,8 @@ int rpmb_init(struct rpmb_state **statep,
 void rpmb_uninit(struct rpmb_state *statep);
 int rpmb_read(struct rpmb_state *state, void *buf, uint16_t addr, uint16_t count);
 int rpmb_write(struct rpmb_state *state, const void *buf, uint16_t addr, uint16_t count, bool sync); /* count must be 1 or 2, addr must be aligned */
+int rpmb_program_key(struct rpmb_state *state);
+int rpmb_read_counter(struct rpmb_state *state, uint32_t *write_counter, uint16_t *result);
 
 /* needs */
 int rpmb_send(void *mmc_handle,

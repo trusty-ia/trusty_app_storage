@@ -101,8 +101,8 @@ struct ipc_port_context {
  * @rx_iovecs:      the buffers to receive
  * @rx_iovec_count: the count of buffers to receive
  */
-int sync_ipc_send_msg(handle_t session, iovec_t *tx_iovecs, uint tx_iovec_count,
-                      iovec_t *rx_iovecs, uint rx_iovec_count);
+int sync_ipc_send_msg(handle_t session, iovec_t *tx_iovecs, size_t tx_iovec_count,
+                      iovec_t *rx_iovecs, size_t rx_iovec_count);
 
 int ipc_port_create(struct ipc_port_context *contextp, const char *port_name,
                     size_t queue_size, size_t max_buffer_size, uint32_t flags);

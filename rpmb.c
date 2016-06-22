@@ -81,19 +81,6 @@ enum rpmb_response {
     RPMB_RESP_DATA_READ                 = 0x0400,
 };
 
-enum rpmb_result {
-    RPMB_RES_OK                         = 0x0000,
-    RPMB_RES_GENERAL_FAILURE            = 0x0001,
-    RPMB_RES_AUTH_FAILURE               = 0x0002,
-    RPMB_RES_COUNT_FAILURE              = 0x0003,
-    RPMB_RES_ADDR_FAILURE               = 0x0004,
-    RPMB_RES_WRITE_FAILURE              = 0x0005,
-    RPMB_RES_READ_FAILURE               = 0x0006,
-    RPMB_RES_NO_AUTH_KEY                = 0x0007,
-
-    RPMB_RES_WRITE_COUNTER_EXPIRED      = 0x0080,
-};
-
 struct rpmb_state {
     struct rpmb_key     key;
     void                *mmc_handle;
@@ -281,7 +268,7 @@ static int rpmb_check_response(const char *cmd_str, enum rpmb_response response_
     return 0;
 }
 
-static int rpmb_read_counter(struct rpmb_state *state, uint32_t *write_counter)
+int rpmb_read_counter(struct rpmb_state *state, uint32_t *write_counter, uint16_t* result)
 {
     int ret;
     struct rpmb_key mac;
@@ -294,11 +281,11 @@ static int rpmb_read_counter(struct rpmb_state *state, uint32_t *write_counter)
 
     ret = rpmb_send(state->mmc_handle, NULL, 0, &cmd, sizeof(cmd), &res, sizeof(res), false);
     if (ret < 0)
-        return ret;
+        goto err;
 
     ret = rpmb_mac(state->key, &res, 1, &mac);
     if (ret < 0)
-        return ret;
+        goto err;
 
     rpmb_dprintf("rpmb: read counter response:\n");
     rpmb_dprint_key("  key/mac       ", res.key_mac, "   expected mac ", mac);
@@ -312,6 +299,10 @@ static int rpmb_read_counter(struct rpmb_state *state, uint32_t *write_counter)
 
     ret = rpmb_check_response("read counter", RPMB_RESP_GET_COUNTER,
                               &res, 1, &mac, &nonce, NULL);
+
+err:
+    if(result)
+        *result = rpmb_get_u16(res.result);
 
     return ret;
 }
@@ -422,18 +413,46 @@ static int rpmb_write_data(struct rpmb_state *state, const char *buf, uint16_t a
 int rpmb_write(struct rpmb_state *state, const void *buf, uint16_t addr, uint16_t count, bool sync)
 {
     int ret;
+    uint16_t result;
 
     if (!state)
         return -EINVAL;
 
     if (!state->write_counter) {
-        ret = rpmb_read_counter(state, &state->write_counter);
+        ret = rpmb_read_counter(state, &state->write_counter, &result);
         if (ret < 0)
             return ret;
     }
+
     return rpmb_write_data(state, buf, addr, count, sync);
 }
 
+int rpmb_program_key(struct rpmb_state *state)
+{
+    int ret;
+    struct rpmb_packet cmd = {
+        .req_resp = rpmb_u16(RPMB_REQ_PROGRAM_KEY),
+        .block_count = rpmb_u16(1),
+    };
+    struct rpmb_packet rescmd = {
+        .req_resp = rpmb_u16(RPMB_REQ_RESULT_READ),
+    };
+    struct rpmb_packet res;
+
+    if (!state)
+        return -EINVAL;
+
+    memcpy(&cmd.key_mac, state->key.byte, sizeof(state->key));
+
+    ret = rpmb_send(state->mmc_handle, &cmd, sizeof(cmd), &rescmd, sizeof(rescmd), &res, sizeof(res), false);
+    if (ret < 0)
+        return ret;
+
+    if(rpmb_get_u16(res.result) != RPMB_RES_OK)
+        return -1;
+
+    return ret;
+}
 
 int rpmb_init(struct rpmb_state **statep,
               void *mmc_handle,

@@ -39,10 +39,10 @@ MODULE_SRCS := \
 
 MODULE_DEPS := \
 	app/trusty \
-	interface/storage \
+	lib/interface/storage \
 	lib/hwkey \
 	lib/libc-trusty \
-	openssl \
+	lib/boringssl \
 
 MODULE_DEPS += \
 	app/storage/test \
