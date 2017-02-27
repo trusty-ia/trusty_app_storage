@@ -84,9 +84,9 @@ struct block_tree {
 };
 
 #define BLOCK_TREE_INITIAL_VALUE(block_tree) {0, 0, {0, 0}, {0, 0},\
-    BLOCK_MAC_INITIAL_VALUE(block_tree.root),\
-    {0, 0, BLOCK_MAC_INITIAL_VALUE(block_tree.inserting.child),\
-    BLOCK_MAC_INITIAL_VALUE(block_tree.inserting.data)}, 0, 0, 0, 0, 0}
+	BLOCK_MAC_INITIAL_VALUE(block_tree.root),\
+	{0, 0, BLOCK_MAC_INITIAL_VALUE(block_tree.inserting.child),\
+	BLOCK_MAC_INITIAL_VALUE(block_tree.inserting.data)}, 0, 0, 0, 0, 0}
 
 
 /**
