@@ -110,5 +110,7 @@ bool file_open(struct transaction *tr,
                enum file_create_mode create);
 void file_close(struct file_handle *file);
 bool file_delete(struct transaction *tr, const char *path); /* returns true if path was found */
+bool file_move(struct transaction *tr, struct file_handle *file,
+               const char *dest_path, enum file_create_mode dest_create);
 bool file_iterate(struct transaction *tr, const char *start_path, bool added,
                   struct file_iterate_state *state);

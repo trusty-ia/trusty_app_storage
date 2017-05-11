@@ -170,6 +170,7 @@ void files_print(struct transaction *tr)
  */
 static void file_block_map_update(struct transaction *tr,
                                   struct block_map *block_map,
+                                  const char *new_path,
                                   struct file_handle *file)
 {
     bool found;
@@ -198,7 +199,7 @@ static void file_block_map_update(struct transaction *tr,
     }
     assert(file_entry_ro);
     found = file_tree_lookup(&block_mac, tr, &tr->files_added, &tree_path,
-                             file_entry_ro->info.path, false);
+                             file_entry_ro->info.path, !!new_path);
     if (!found) {
         found = file_tree_lookup(&block_mac, tr, &tr->fs->files, &tree_path,
                                  file_entry_ro->info.path, false);
@@ -207,6 +208,13 @@ static void file_block_map_update(struct transaction *tr,
             goto err;
         }
         assert(found);
+
+        if (new_path) {
+            block_tree_insert_block_mac(tr, &tr->files_removed,
+                                        block_mac_to_block(tr, &block_mac),
+                                        block_mac);
+        }
+
         old_block = block_mac_to_block(tr, &block_mac);
         file_block = block_mac_to_block(tr, &file->block_mac);
         if (transaction_block_need_copy(tr, file_block)) {
@@ -214,8 +222,9 @@ static void file_block_map_update(struct transaction *tr,
                 pr_warn("transaction failed, abort\n");
                 goto err;
             }
-            assert(block_map->tree.root_block_changed ||
-                   file->size != file_entry_ro->info.size);
+            assert((block_map && block_map->tree.root_block_changed) ||
+                   file->size != file_entry_ro->info.size ||
+                   new_path);
             assert(old_block == file_block);
             new_block = block_allocate(tr);
             if (tr->failed) {
@@ -256,21 +265,40 @@ static void file_block_map_update(struct transaction *tr,
         block_mac = block_tree_path_get_data_block_mac(&tree_path);
         assert(block_mac_to_block(tr, &block_mac) == block_mac_to_block(tr, &file->block_mac));
         //assert(block_mac_eq(tr, &block_mac, &file->block_mac)); /* TODO: enable after insert mac TODO */
+
+        if (new_path) {
+            /* TODO: remove by path or, when possible, skip insert instead */
+            block_tree_remove(tr, &tr->files_updated, old_block, block_mac_to_block(tr, &block_mac));
+        }
     }
     if (!file_entry_rw) {
         file_entry_rw = block_dirty(tr, file_entry_ro, false);
     }
 
-    pr_write("file at %lld: update block_map %lld -> %lld\n",
-             block_mac_to_block(tr, &block_mac),
-             block_mac_to_block(tr, &file_entry_rw->block_map),
-             block_mac_to_block(tr, &block_map->tree.root));
+    if (block_map) {
+        pr_write("file at %lld: update block_map %lld -> %lld\n",
+                 block_mac_to_block(tr, &block_mac),
+                 block_mac_to_block(tr, &file_entry_rw->block_map),
+                 block_mac_to_block(tr, &block_map->tree.root));
 
-    file_entry_rw->block_map = block_map->tree.root;
+        file_entry_rw->block_map = block_map->tree.root;
+    }
+
     file_entry_rw->info.size = file->size;
-    block_tree_path_put_dirty(tr, &tree_path, tree_path.count,
-                              file_entry_rw, &file_entry_ref);
-    file->block_mac = tree_path.entry[tree_path.count].block_mac; /* TODO: add better api */
+    if (new_path) {
+        strcpy(file_entry_rw->info.path, new_path);
+        block_put_dirty(tr, file_entry_rw, &file_entry_ref, &block_mac, NULL);
+        block_tree_insert_block_mac(tr, &tr->files_added, path_hash(tr, new_path), block_mac);
+        if (tr->failed) {
+            pr_warn("transaction failed, abort\n");
+            goto err;
+        }
+        block_mac_copy(tr, &file->block_mac, &block_mac);
+    } else {
+        block_tree_path_put_dirty(tr, &tree_path, tree_path.count,
+                                  file_entry_rw, &file_entry_ref);
+        file->block_mac = tree_path.entry[tree_path.count].block_mac; /* TODO: add better api */
+    }
 
     /*
      * Move to head of list so opening the same file twice in a transaction
@@ -383,7 +411,7 @@ static const void *file_get_block_etc(struct transaction *tr,
         /* TODO: get new mac */
         assert(!tr->failed);
         block_map_set(tr, &block_map, file_block, &block_mac);
-        file_block_map_update(tr, &block_map, file);
+        file_block_map_update(tr, &block_map, NULL, file);
         if (tr->failed) {
             pr_warn("transaction failed, abort\n");
             goto err;
@@ -470,7 +498,7 @@ void file_block_put_dirty(struct transaction *tr,
     block_map_put_dirty(tr, &block_map, file_block,
                         data - sizeof(struct iv), data_ref);
 
-    file_block_map_update(tr, &block_map, file);
+    file_block_map_update(tr, &block_map, NULL, file);
 }
 
 /**
@@ -576,7 +604,7 @@ void file_set_size(struct transaction *tr,
         block_map_truncate(tr, &block_map, file_block);
     }
     file->size = size;
-    file_block_map_update(tr, &block_map, file);
+    file_block_map_update(tr, &block_map, NULL, file);
 }
 
 /**
@@ -1039,6 +1067,58 @@ bool file_delete(struct transaction *tr, const char *path)
 }
 
 /**
+ * file_move - Move a file to a new path, optionally replacing an existing file
+ * @tr:             Transaction object.
+ * @file:           File handle object.
+ * @dest_path:      Path to move file to.
+ * @dest_create:    FILE_OPEN_NO_CREATE, FILE_OPEN_CREATE or
+ *                  FILE_OPEN_CREATE_EXCLUSIVE.
+ *
+ * Return: %true if file was moved, %false otherwise.
+ */
+bool file_move(struct transaction *tr, struct file_handle *file,
+               const char *dest_path, enum file_create_mode dest_create)
+{
+    assert(tr->fs);
+    struct block_mac block_mac;
+    struct block_mac committed_block_mac;
+    struct block_tree_path tree_path;
+    bool dest_found;
+
+    dest_found = file_tree_lookup(&block_mac, tr, &tr->files_added, &tree_path,
+                                  dest_path, false);
+    if (!dest_found) {
+        dest_found = file_lookup_not_removed(&block_mac, &committed_block_mac,
+                                             tr, &tree_path, dest_path);
+    }
+
+    if (dest_found) {
+        if (dest_create == FILE_OPEN_CREATE_EXCLUSIVE) {
+            return false;
+        }
+        if (block_mac_eq(tr, &file->block_mac, &block_mac)) {
+            return true;
+        }
+        file_delete(tr, dest_path);
+    } else {
+        if (dest_create == FILE_OPEN_NO_CREATE) {
+            return false;
+        }
+    }
+
+    if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
+        return false;
+    }
+    file_block_map_update(tr, NULL, dest_path, file);
+    if (tr->failed) {
+        pr_warn("transaction failed, abort\n");
+        return false;
+    }
+    return true;
+}
+
+/**
  * file_for_each_open - Call function for every open file in every transaction
  * @tr:         Transaction object.
  * @func:       Function to call.
@@ -1174,15 +1254,16 @@ static void file_update_block_mac_tr(struct transaction *tr,
 
     assert(block_mac_valid(tr, old_block_mac) || other_tr == tr);
     list_for_every_entry(&other_tr->open_files, file, struct file_handle, node) {
-        if (!block_mac_same_block(tr, &file->committed_block_mac, old_block_mac) ||
-            (!block_mac_valid(tr, &file->committed_block_mac) &&
-             !block_mac_same_block(tr, &file->block_mac, new_block_mac))) {
+        if (block_mac_valid(tr, old_block_mac) ?
+                !block_mac_same_block(tr, &file->committed_block_mac, old_block_mac) :
+                !block_mac_same_block(tr, &file->block_mac, new_block_mac)) {
             pr_write("file handle %p, unrelated %lld != %lld\n",
                      file, block_mac_to_block(tr, &file->committed_block_mac),
                      block_mac_to_block(tr, new_block_mac));
             continue; /*unrelated file */
         }
         assert(old_block_no_mac ||
+               !block_mac_valid(tr, old_block_mac) ||
                block_mac_eq(tr, &file->committed_block_mac, old_block_mac));
 
         pr_write("file handle %p, stage block %lld/%lld -> %lld, size %lld -> %lld\n",
