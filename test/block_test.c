@@ -1062,6 +1062,93 @@ static void file_test_open(struct transaction *tr,
     }
 }
 
+static void file_test_commit(struct transaction *tr, bool commit)
+{
+    if (commit) {
+        transaction_complete(tr);
+        assert(!tr->failed);
+        transaction_activate(tr);
+    }
+}
+
+static void file_move_expect(struct transaction *tr,
+                             const char *src_path,
+                             enum file_create_mode src_create,
+                             const char *dest_path,
+                             enum file_create_mode dest_create,
+                             bool expect)
+{
+    struct file_handle file;
+    bool moved;
+
+    assert(!tr->failed);
+
+    open_test_file(tr, &file, src_path, src_create);
+
+    moved = file_move(tr, &file, dest_path, dest_create);
+    assert(moved == expect);
+    assert(!tr->failed);
+    file_close(&file);
+}
+
+static void file_move_expect_fail(struct transaction *tr,
+                                  const char *src_path,
+                                  enum file_create_mode src_create,
+                                  const char *dest_path,
+                                  enum file_create_mode dest_create)
+{
+    file_move_expect(tr, src_path, src_create, dest_path, dest_create, false);
+}
+
+static void file_move_expect_success(struct transaction *tr,
+                                     const char *src_path,
+                                     enum file_create_mode src_create,
+                                     const char *dest_path,
+                                     enum file_create_mode dest_create)
+{
+    file_move_expect(tr, src_path, src_create, dest_path, dest_create, true);
+}
+
+static void file_test_etc(struct transaction *tr,
+                          bool commit,
+                          const char *path,
+                          enum file_create_mode create,
+                          const char *move_path,
+                          enum file_create_mode move_create,
+                          int allocate,
+                          int read,
+                          int free,
+                          bool delete,
+                          int id)
+{
+    bool deleted;
+    struct file_handle file;
+
+    open_test_file(tr, &file, path, create);
+
+    file_test_commit(tr, commit);
+
+    if (move_path) {
+        file_move(tr, &file, move_path, move_create);
+        file_test_commit(tr, commit);
+        path = move_path;
+    }
+    file_test_open(tr, &file, allocate, read, free, id);
+    file_test_commit(tr, commit);
+
+    if (delete) {
+        if (print_test_verbose) {
+            printf("%s: delete file %s, at %lld:\n",
+                   __func__, path, block_mac_to_block(tr, &file.block_mac));
+        }
+        deleted = file_delete(tr, path);
+        file_test_commit(tr, commit);
+        assert(deleted);
+    }
+
+    file_close(&file);
+}
+
 static void file_test(struct transaction *tr,
                       const char *path,
                       enum file_create_mode create,
@@ -1071,22 +1158,8 @@ static void file_test(struct transaction *tr,
                       bool delete,
                       int id)
 {
-    bool deleted;
-    struct file_handle file;
-
-    open_test_file(tr, &file, path, create);
-    file_test_open(tr, &file, allocate, read, free, id);
-
-    if (delete) {
-        if (print_test_verbose) {
-            printf("%s: delete file %s, at %lld:\n",
-                   __func__, path, block_mac_to_block(tr, &file.block_mac));
-        }
-        deleted = file_delete(tr, path);
-        assert(deleted);
-    }
-
-    file_close(&file);
+    file_test_etc(tr, false, path, create, NULL, FILE_OPEN_NO_CREATE, allocate,
+                  read, free, delete, id);
 }
 
 static void file_test_split_tr(struct transaction *tr,
@@ -1323,10 +1396,71 @@ static void file_delete1_no_free_test(struct transaction *tr)
     file_test(tr, "test1", FILE_OPEN_NO_CREATE, 0, 0, 0, true, 1);
 }
 
+static void file_move12_test(struct transaction *tr)
+{
+    file_test_etc(tr, false, "test1", FILE_OPEN_NO_CREATE, "test2", FILE_OPEN_CREATE_EXCLUSIVE,
+                  0, file_test_block_count, 0, false, 1);
+}
+
+static void file_move21_test(struct transaction *tr)
+{
+    file_test_etc(tr, true, "test2", FILE_OPEN_NO_CREATE, "test1", FILE_OPEN_CREATE_EXCLUSIVE,
+                  0, file_test_block_count, 0, false, 1);
+}
+
 static void file_create2_test(struct transaction *tr)
 {
     file_test(tr, "test1", FILE_OPEN_CREATE_EXCLUSIVE, file_test_block_count, 0, 0, false, 2);
     file_test(tr, "test2", FILE_OPEN_CREATE_EXCLUSIVE, file_test_block_count, 0, 0, false, 3);
+}
+
+static void file_move_test(struct transaction *tr)
+{
+    file_test(tr, "test1", FILE_OPEN_CREATE_EXCLUSIVE, file_test_block_count, 0, 0, false, 2);
+    file_test_etc(tr, false, "test1", FILE_OPEN_NO_CREATE, "test2", FILE_OPEN_CREATE_EXCLUSIVE,
+                  0, file_test_block_count, 0, false, 2);
+    file_test(tr, "test2", FILE_OPEN_NO_CREATE, 0, file_test_block_count, file_test_block_count, true, 2);
+
+    file_test(tr, "test1", FILE_OPEN_CREATE_EXCLUSIVE, file_test_block_count, 0, 0, false, 2);
+    file_test(tr, "test2", FILE_OPEN_CREATE_EXCLUSIVE, file_test_block_count, 0, 0, false, 3);
+
+    file_test(tr, "test1", FILE_OPEN_NO_CREATE, 0, file_test_block_count, false, false, 2);
+    file_test(tr, "test2", FILE_OPEN_NO_CREATE, 0, file_test_block_count, false, false, 3);
+
+    file_move_expect_fail(tr, "test1", FILE_OPEN_NO_CREATE,
+                          "test3", FILE_OPEN_NO_CREATE);
+
+    file_move_expect_fail(tr, "test1", FILE_OPEN_NO_CREATE,
+                          "test2", FILE_OPEN_CREATE_EXCLUSIVE);
+
+    file_move_expect_fail(tr, "test1", FILE_OPEN_NO_CREATE,
+                          "test1", FILE_OPEN_CREATE_EXCLUSIVE);
+
+    file_move_expect_success(tr, "test1", FILE_OPEN_NO_CREATE,
+                             "test1", FILE_OPEN_NO_CREATE);
+
+    transaction_complete(tr);
+    assert(!tr->failed);
+    transaction_activate(tr);
+
+    file_move_expect_fail(tr, "test1", FILE_OPEN_NO_CREATE,
+                          "test3", FILE_OPEN_NO_CREATE);
+
+    file_move_expect_fail(tr, "test1", FILE_OPEN_NO_CREATE,
+                          "test2", FILE_OPEN_CREATE_EXCLUSIVE);
+
+    file_move_expect_fail(tr, "test1", FILE_OPEN_NO_CREATE,
+                          "test1", FILE_OPEN_CREATE_EXCLUSIVE);
+
+    file_move_expect_success(tr, "test1", FILE_OPEN_NO_CREATE,
+                             "test1", FILE_OPEN_NO_CREATE);
+
+    file_test_etc(tr, false, "test1", FILE_OPEN_NO_CREATE, "test2", FILE_OPEN_NO_CREATE,
+                  0, file_test_block_count, 0, false, 2);
+
+    file_test(tr, "test2", FILE_OPEN_NO_CREATE, 0, file_test_block_count, false, false, 2);
+
+    file_test(tr, "test2", FILE_OPEN_NO_CREATE, 0, file_test_block_count, file_test_block_count, true, 2);
 }
 
 static void file_delete2_test(struct transaction *tr)
@@ -1583,6 +1717,12 @@ struct {
     TEST(file_delete2_test),
     TEST(file_create2_read_after_commit_test),
     TEST(file_delete2_test),
+    TEST(file_move_test),
+    TEST(file_create1_test),
+    TEST(file_write1_test),
+    TEST(file_move12_test),
+    TEST(file_move21_test),
+    TEST(file_delete1_test),
     TEST(file_create3_conflict_test),
     TEST(file_create_delete_2_transaction_test),
     TEST(file_create_many_test),
