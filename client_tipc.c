@@ -294,6 +294,153 @@ static enum storage_err storage_file_delete(struct storage_msg *msg,
 	return STORAGE_NO_ERROR;
 }
 
+/**
+ * storage_file_check_name - Check if file handle matches path
+ * @tr:         Transaction object.
+ * @file:       File handle object.
+ * @path:       Path to check.
+ *
+ * Return: %true if @file matches @path, %false otherwise.
+ */
+static bool storage_file_check_name(struct transaction *tr,
+                                    const struct file_handle *file,
+                                    const char *path)
+{
+	bool ret;
+	const struct file_info *file_info;
+	obj_ref_t ref = OBJ_REF_INITIAL_VALUE(ref);
+
+	file_info = file_get_info(tr, &file->block_mac, &ref);
+	if (!file_info) {
+		printf("can't read file entry at %lld\n",
+		       block_mac_to_block(tr, &file->block_mac));
+		return false;
+	}
+	assert(file_info);
+	ret = strcmp(file_info->path, path) == 0;
+	file_info_put(file_info, &ref);
+
+	return ret;
+}
+
+static enum storage_err storage_file_move(struct storage_msg *msg,
+                                          struct storage_file_move_req *req, size_t req_size,
+                                          struct storage_client_session *session)
+{
+	bool moved;
+	bool found;
+	enum storage_err result;
+	const char *old_name;
+	const char *new_name;
+	size_t fname_len;
+	size_t old_len;
+	size_t new_len;
+	uint32_t flags;
+	struct file_handle *file = NULL;
+	char path_buf[FS_PATH_MAX];
+	enum file_create_mode file_create_mode;
+	struct file_handle tmp_file;
+
+	if (req_size < sizeof(*req)) {
+		SS_ERR("%s: invalid request size (%zd)\n", __func__, req_size);
+		return STORAGE_ERR_NOT_VALID;
+	}
+
+	flags = req->flags;
+	if ((flags & ~STORAGE_FILE_MOVE_MASK) != 0) {
+		SS_ERR("invalid move flags 0x%x\n", flags);
+		return STORAGE_ERR_NOT_VALID;
+	}
+
+	if (flags & STORAGE_FILE_MOVE_CREATE) {
+		if (flags & STORAGE_FILE_MOVE_CREATE_EXCLUSIVE) {
+			file_create_mode = FILE_OPEN_CREATE_EXCLUSIVE;
+		} else {
+			file_create_mode = FILE_OPEN_CREATE;
+		}
+	} else {
+		file_create_mode = FILE_OPEN_NO_CREATE;
+	}
+
+	/* make sure filename is legal */
+	old_name = req->old_new_name;
+	fname_len = req_size - sizeof(*req);
+	if (!is_valid_name(old_name, fname_len)) {
+		SS_ERR("%s: invalid filename\n", __func__);
+		return STORAGE_ERR_NOT_VALID;
+	}
+
+	old_len = req->old_name_len;
+	if (old_len >= fname_len) {
+		SS_ERR("%s: invalid old filename length (%zd) >= (%zd)\n",
+		       __func__, old_len, fname_len);
+		return STORAGE_ERR_NOT_VALID;
+	}
+	new_len = fname_len - old_len;
+	new_name = old_name + old_len;
+
+	if (flags & STORAGE_FILE_MOVE_OPEN_FILE) {
+		file = get_file_handle(session, req->handle);
+		if (!file)
+			return STORAGE_ERR_NOT_VALID;
+	}
+
+	result = get_path(path_buf, sizeof(path_buf), &session->uuid,
+			  old_name, old_len);
+	if (result != STORAGE_NO_ERROR) {
+		return result;
+	}
+
+	SS_INFO("%s: old path %s\n", __func__, path_buf);
+
+	if (file) {
+		if (!storage_file_check_name(&session->tr, file, path_buf)) {
+			return STORAGE_ERR_NOT_VALID;
+		}
+	} else {
+		found = file_open(&session->tr, path_buf,
+				  &tmp_file, FILE_OPEN_NO_CREATE);
+		if (!found) {
+			return STORAGE_ERR_NOT_FOUND;
+		}
+		file = &tmp_file;
+	}
+
+	result = get_path(path_buf, sizeof(path_buf), &session->uuid,
+			  new_name, new_len);
+	if (result != STORAGE_NO_ERROR) {
+		if (file == &tmp_file) {
+			file_close(&tmp_file);
+		}
+		return result;
+	}
+	SS_INFO("%s: new path %s\n", __func__, path_buf);
+
+	moved = file_move(&session->tr, file, path_buf, file_create_mode);
+	if (file == &tmp_file) {
+		file_close(&tmp_file);
+	}
+
+	if (session->tr.failed) {
+		SS_ERR("%s: transaction failed\n", __func__);
+		return STORAGE_ERR_GENERIC;
+	} else if (!moved) {
+		return (flags & STORAGE_FILE_MOVE_CREATE) ?
+			STORAGE_ERR_EXIST : STORAGE_ERR_NOT_FOUND;
+	}
+
+	if (msg->flags & STORAGE_MSG_FLAG_TRANSACT_COMPLETE) {
+		transaction_complete(&session->tr);
+		if (session->tr.failed) {
+			SS_ERR("%s: transaction commit failed\n", __func__);
+			return STORAGE_ERR_GENERIC;
+		}
+		return STORAGE_NO_ERROR;
+	}
+
+	return STORAGE_NO_ERROR;
+}
+
 static int storage_file_open(struct storage_msg *msg,
                              struct storage_file_open_req *req, size_t req_size,
                              struct storage_client_session *session)
@@ -1032,6 +1179,9 @@ static int client_handle_msg(struct ipc_channel_context *ctx, void *msg_buf, siz
 	switch (msg->cmd) {
 	case STORAGE_FILE_DELETE:
 		result = storage_file_delete(msg, payload, payload_len, session);
+		break;
+	case STORAGE_FILE_MOVE:
+		result = storage_file_move(msg, payload, payload_len, session);
 		break;
 	case STORAGE_FILE_OPEN:
 		return storage_file_open(msg, payload, payload_len, session);
