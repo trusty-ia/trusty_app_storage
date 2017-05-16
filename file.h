@@ -35,6 +35,18 @@ struct file_handle {
     bool used_by_tr;
 };
 
+/**
+ * struct file_info - On-disk file entry
+ * @size:       File size in bytes.
+ * @reserved:   Reserved for future use. Write 0, read ignore.
+ * @path:       File path and name.
+ */
+struct file_info {
+    data_block_t size;
+    uint64_t reserved;
+    char path[FS_PATH_MAX];
+};
+
 size_t get_file_block_size(struct fs *fs);
 const void *file_get_block(struct transaction *tr, struct file_handle *file,
                            data_block_t file_block, obj_ref_t *ref);
@@ -45,6 +57,12 @@ void file_block_put(const void *data, obj_ref_t *data_ref);
 void file_block_put_dirty(struct transaction *tr,
                           struct file_handle *file, data_block_t file_block,
                           void *data, obj_ref_t *data_ref);
+
+const struct file_info *file_get_info(struct transaction *tr,
+                                      const struct block_mac *block_mac,
+                                      obj_ref_t *ref);
+void file_info_put(const struct file_info *data, obj_ref_t *data_ref);
+
 bool file_get_size(struct transaction *tr,
                    struct file_handle *file,
                    data_block_t *size);
