@@ -839,6 +839,51 @@ static struct file_handle *file_find_open(struct transaction *tr,
 }
 
 /**
+ * file_iterate - Iterate over all files
+ * @tr:         Transaction object.
+ * @start_path: First file to not iterate over.
+ * @added:      %false to iterate over committed files, %true to iterate over
+ *              uncommitted files added by @tr.
+ * @state:      client state object containing function to call for each file.
+ */
+bool file_iterate(struct transaction *tr, const char *start_path, bool added,
+                  struct file_iterate_state *state)
+{
+    struct block_tree_path tree_path;
+    struct block_mac block_mac;
+    struct block_tree *tree = added ? &tr->files_added : &tr->fs->files;
+    bool found;
+    bool stop;
+    bool removed = false;
+
+    if (start_path == NULL) {
+        block_tree_walk(tr, tree, 0, true, &tree_path);
+    } else {
+        found = file_tree_lookup(&block_mac, tr, tree, &tree_path,
+                                 start_path, false);
+        if (!found) {
+            return false;
+        }
+        block_tree_path_next(&tree_path);
+    }
+
+    while (block_tree_path_get_key(&tree_path)) {
+        block_mac = block_tree_path_get_data_block_mac(&tree_path);
+        if (!added) {
+            removed = file_is_removed(tr, block_mac_to_block(tr, &block_mac));
+            file_check_updated(tr, &block_mac, &block_mac);
+        }
+
+        stop = state->file(state, tr, &block_mac, added, removed);
+        if (stop) {
+            return true;
+        }
+        block_tree_path_next(&tree_path);
+    }
+    return true;
+}
+
+/**
  * file_open - Open file
  * @tr:         Transaction object.
  * @path:       Path to find or create file at.

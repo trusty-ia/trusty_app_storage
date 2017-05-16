@@ -47,6 +47,24 @@ struct file_info {
     char path[FS_PATH_MAX];
 };
 
+/**
+ * struct file_iterate_state - File iterator state
+ */
+struct file_iterate_state {
+    /**
+     * file - Found file callback
+     * @iter:       Iterator object.
+     * @tr:         Transaction object.
+     * @block_mac:  File entry block_mac.
+     * @added:      %true if file was added in current transaction and has not
+     *              yet been committed
+     */
+    bool (*file)(struct file_iterate_state *iter,
+                 struct transaction *tr,
+                 const struct block_mac *block_mac,
+                 bool added, bool removed);
+};
+
 size_t get_file_block_size(struct fs *fs);
 const void *file_get_block(struct transaction *tr, struct file_handle *file,
                            data_block_t file_block, obj_ref_t *ref);
@@ -92,3 +110,5 @@ bool file_open(struct transaction *tr,
                enum file_create_mode create);
 void file_close(struct file_handle *file);
 bool file_delete(struct transaction *tr, const char *path); /* returns true if path was found */
+bool file_iterate(struct transaction *tr, const char *start_path, bool added,
+                  struct file_iterate_state *state);
