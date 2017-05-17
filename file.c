@@ -733,6 +733,33 @@ static bool file_is_removed(struct transaction *tr, data_block_t block)
 }
 
 /**
+ * file_check_updated - Helper function to check if transaction updated file
+ * @tr:                     Transaction object.
+ * @committed_block_mac:    Block-mac object to check.
+ * @block_mac_out:          Block-mac object to return block number and mac in
+ *                          for the current state of the file in @tr.
+ *
+ * Return: %true if file is updated in @tr, %false otherwise.
+ */
+static bool file_check_updated(struct transaction *tr,
+                               const struct block_mac *committed_block_mac,
+                               struct block_mac *block_mac_out)
+{
+    struct block_tree_path tree_path;
+    data_block_t block = block_mac_to_block(tr, committed_block_mac);
+
+    block_tree_walk(tr, &tr->files_updated, block, false, &tree_path);
+    if (block_tree_path_get_key(&tree_path) == block) {
+        pr_read("%lld, already updated in this transaction, use new copy %lld\n",
+                block, block_tree_path_get_data(&tree_path));
+        *block_mac_out = block_tree_path_get_data_block_mac(&tree_path);
+        return true;
+    }
+
+    return false;
+}
+
+/**
  * file_lookup_not_removed - Helper function to search for a file
  * @block_mac_out:              Block-mac object to return block number and mac
  *                              in for the current state of the file.
