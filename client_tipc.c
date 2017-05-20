@@ -624,6 +624,160 @@ err_transaction_complete:
 	return result;
 }
 
+struct storage_file_list_state {
+	struct file_iterate_state iter;
+	char prefix[34];
+	size_t prefix_len;
+	uint8_t buf[1024];
+	size_t buf_used;
+	uint8_t max_count;
+	uint8_t count;
+};
+
+static bool storage_file_list_buf_full(struct storage_file_list_state *miter)
+{
+	size_t max_item_size = FS_PATH_MAX - miter->prefix_len + 2;
+
+	if (miter->max_count && miter->count >= miter->max_count) {
+		return true;
+	}
+
+	return miter->buf_used + max_item_size > sizeof(miter->buf);
+}
+
+static void storage_file_list_add(struct storage_file_list_state *miter,
+                                  uint8_t flags, const char *path)
+{
+	struct storage_file_list_resp *resp;
+
+	assert(!storage_file_list_buf_full(miter));
+
+	resp = (void *)(miter->buf + miter->buf_used);
+	resp->flags = flags;
+	miter->buf_used++;
+	miter->count++;
+	if (path) {
+		strcpy(resp->name, path);
+		miter->buf_used += strlen(path) + 1;
+	}
+}
+
+static bool storage_file_list_iter(struct file_iterate_state *iter,
+                                   struct transaction *tr,
+                                   const struct block_mac *block_mac,
+                                   bool added, bool removed)
+{
+	struct storage_file_list_state *miter =
+		containerof(iter, struct storage_file_list_state, iter);
+	const struct file_info *file_info;
+	obj_ref_t ref = OBJ_REF_INITIAL_VALUE(ref);
+
+	file_info = file_get_info(tr, block_mac, &ref);
+
+	if (strncmp(file_info->path, miter->prefix, miter->prefix_len) == 0) {
+		storage_file_list_add(miter,
+		                      added ? STORAGE_FILE_LIST_ADDED :
+		                      removed ? STORAGE_FILE_LIST_REMOVED :
+		                      STORAGE_FILE_LIST_COMMITTED,
+		                      file_info->path + miter->prefix_len);
+	}
+
+	file_info_put(file_info, &ref);
+
+	return storage_file_list_buf_full(miter);
+}
+
+
+static int storage_file_list(struct storage_msg *msg,
+                             struct storage_file_list_req *req, size_t req_size,
+                             struct storage_client_session *session)
+{
+	enum storage_err result = STORAGE_NO_ERROR;
+	void *out = NULL;
+	size_t out_size = 0;
+	bool ret;
+	const char *last_name;
+	char path_buf[FS_PATH_MAX];
+	uint8_t last_state;
+	const char *fname;
+	size_t fname_len;
+	struct storage_file_list_state state = {
+		.iter.file =  storage_file_list_iter,
+		.buf_used = 0,
+	};
+
+	if (req_size < sizeof(*req)) {
+		SS_ERR("%s: invalid request size (%zd)\n", __func__, req_size);
+		result = STORAGE_ERR_NOT_VALID;
+		goto err_invalid_input;
+	}
+
+	result = get_path(state.prefix, sizeof(state.prefix), &session->uuid, "", 0);
+	if (result != STORAGE_NO_ERROR) {
+		SS_ERR("%s: internal error, get_path failed\n", __func__);
+		result = STORAGE_ERR_GENERIC;
+		goto err_get_path_prefix;
+	}
+	state.prefix_len = strlen(state.prefix);
+
+	last_state = req->flags & STORAGE_FILE_LIST_STATE_MASK;
+
+	if (last_state == STORAGE_FILE_LIST_END) {
+		SS_ERR("%s: invalid request state (%d)\n", __func__, last_state);
+		result = STORAGE_ERR_NOT_VALID;
+		goto err_invalid_state;
+	}
+
+	if (last_state == STORAGE_FILE_LIST_START) {
+		last_name = NULL;
+	} else {
+		/* make sure filename is legal */
+		fname = req->name;
+		fname_len = req_size - sizeof(*req);
+		if (!is_valid_name(fname, fname_len)) {
+			SS_ERR("%s: invalid filename\n", __func__);
+			result = STORAGE_ERR_NOT_VALID;
+			goto err_invalid_filename;
+		}
+
+		result = get_path(path_buf, sizeof(path_buf), &session->uuid, fname, fname_len);
+		if (result != STORAGE_NO_ERROR) {
+			goto err_invalid_filename;
+		}
+
+		last_name = path_buf;
+	}
+
+	if (last_state != STORAGE_FILE_LIST_ADDED) {
+		ret = file_iterate(&session->tr, last_name, false, &state.iter);
+		last_name = NULL;
+	} else {
+		ret = true;
+	}
+	if (ret && !storage_file_list_buf_full(&state)) {
+		ret = file_iterate(&session->tr, last_name, true, &state.iter);
+	}
+	if (!ret) {
+		SS_ERR("%s: file_iterate failed\n", __func__);
+		result = STORAGE_ERR_GENERIC;
+		goto err_file_iterate;
+	}
+
+	if (!storage_file_list_buf_full(&state)) {
+		storage_file_list_add(&state, STORAGE_FILE_LIST_END, NULL);
+	}
+
+	out = state.buf;
+	out_size = state.buf_used;
+
+err_file_iterate:
+err_invalid_filename:
+err_invalid_state:
+err_get_path_prefix:
+err_invalid_input:
+	return send_response(session, result, msg, out, out_size);
+}
+
 static int storage_file_get_size(struct storage_msg *msg,
                                  struct storage_file_get_size_req *req, size_t req_size,
                                  struct storage_client_session *session)
@@ -889,6 +1043,8 @@ static int client_handle_msg(struct ipc_channel_context *ctx, void *msg_buf, siz
 		break;
 	case STORAGE_FILE_READ:
 		return storage_file_read(msg, payload, payload_len, session);
+	case STORAGE_FILE_LIST:
+		return storage_file_list(msg, payload, payload_len, session);
 	case STORAGE_FILE_GET_SIZE:
 		return storage_file_get_size(msg, payload, payload_len, session);
 	case STORAGE_FILE_SET_SIZE:
