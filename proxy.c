@@ -70,23 +70,11 @@ static int get_storage_encryption_key(hwkey_session_t session, uint8_t *key,
 static int get_rpmb_auth_key(hwkey_session_t session, uint8_t *key,
                              uint32_t key_size)
 {
-	/*
 	const char *storage_auth_key_id =
 	        "com.android.trusty.storage_auth.rpmb";
-
 	int rc = hwkey_get_keyslot_data(session, storage_auth_key_id, key,
 	                                &key_size);
 	if (rc < 0) {
-		SS_ERR("%s: failed to get key: %d\n", __func__, rc);
-		return rc;
-	}*/
-
-	uint32_t kdf_version = HWKEY_KDF_VERSION_1;
-	static const uint8_t DERIVATION_DATA[] = "TrustySecureStorageRpmbAuthKey00";
-
-	int rc = hwkey_derive(session, &kdf_version, DERIVATION_DATA, key, key_size);
-
-        if (rc < 0) {
 		SS_ERR("%s: failed to get key: %d\n", __func__, rc);
 		return rc;
 	}
