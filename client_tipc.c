@@ -651,18 +651,20 @@ static int storage_file_read(struct storage_msg *msg,
 		block_num = offset / block_size;
 		block_data = file_get_block(&session->tr, file, block_num,
 		                            &block_data_ref);
-		if (!block_data) {
-			SS_ERR("error reading block %lld\n", block_num);
-			result = STORAGE_ERR_GENERIC;
-			goto err_get_block;
-		}
-
 		block_offset = offset % block_size;
 		len = (block_offset + bytes_left > block_size) ?
 		      block_size - block_offset : bytes_left;
-
-		memcpy(bufp, block_data + block_offset, len);
-		file_block_put(block_data, &block_data_ref);
+		if (!block_data) {
+			if (session->tr.failed) {
+				SS_ERR("error reading block %lld\n", block_num);
+				result = STORAGE_ERR_GENERIC;
+				goto err_get_block;
+			}
+			memset(bufp, 0, len);
+		} else {
+			memcpy(bufp, block_data + block_offset, len);
+			file_block_put(block_data, &block_data_ref);
+		}
 
 		bytes_left -= len;
 		offset += len;
@@ -675,6 +677,44 @@ static int storage_file_read(struct storage_msg *msg,
 err_get_block:
 err_invalid_input:
 	return send_response(session, result, msg, out, out_size);
+}
+
+static enum storage_err storage_create_gap(struct storage_client_session *session,
+                                           struct file_handle *file)
+{
+	size_t block_size = get_file_block_size(session->tr.fs);
+	data_block_t block_num;
+	size_t block_offset;
+	uint8_t *block_data;
+	obj_ref_t block_data_ref = OBJ_REF_INITIAL_VALUE(block_data_ref);
+
+	block_num = file->size / block_size;
+	block_offset = file->size % block_size;
+
+	if (block_offset) {
+		/*
+		 * The file does not currently end on a block boundary.
+		 * We don't clear data in partial blocks when truncating
+		 * a file, so the last block could contain data that
+		 * should not be readable. We unconditionally clear the
+		 * exposed data when creating gaps in the file, as we
+		 * don't know if that data is already clear.
+		 */
+		block_data = file_get_block_write(&session->tr, file, block_num,
+		                                  true, &block_data_ref);
+		if (!block_data) {
+			SS_ERR("error getting block %lld\n", block_num);
+			return STORAGE_ERR_GENERIC;
+		}
+
+		memset(block_data + block_offset, 0, block_size - block_offset);
+		file_block_put_dirty(&session->tr, file, block_num,
+		                     block_data, &block_data_ref);
+
+		SS_INFO("%s: clear block at old size 0x%llx, block_offset 0x%zx\n",
+			__func__, file->size, block_offset);
+	}
+	return STORAGE_NO_ERROR;
 }
 
 static enum storage_err storage_file_write(struct storage_msg *msg,
@@ -706,9 +746,10 @@ static enum storage_err storage_file_write(struct storage_msg *msg,
 
 	offset = req->offset;
 	if (offset > file->size) {
-		SS_ERR("%s: can't start writing past end of file (%lld > %lld) \n",
-		       __func__, offset, file->size);
-		return STORAGE_ERR_NOT_VALID;
+		result = storage_create_gap(session, file);
+		if (result != STORAGE_NO_ERROR) {
+			goto err_write;
+		}
 	}
 
 	bufp = req->data;
@@ -988,8 +1029,12 @@ static enum storage_err storage_file_set_size(struct storage_msg *msg,
 
 	/* for now we only support shrinking the file */
 	if (new_size > file->size) {
-		SS_ERR("%s: bad trunc length 0x%llx\n", __func__, new_size);
-		return STORAGE_ERR_NOT_VALID;
+		enum storage_err result;
+		result = storage_create_gap(session, file);
+		if (result != STORAGE_NO_ERROR) {
+			return result;
+		}
+		storage_create_gap(session, file);
 	}
 
 	/* check for nop */
