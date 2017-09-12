@@ -181,9 +181,8 @@ static void file_block_map_update(struct transaction *tr,
     struct block_mac block_mac;
     const struct file_entry *file_entry_ro;
     struct file_entry *file_entry_rw = NULL;
-    obj_ref_t file_entry_old_ref = OBJ_REF_INITIAL_VALUE(file_entry_ref);
+    obj_ref_t file_entry_ref = OBJ_REF_INITIAL_VALUE(file_entry_ref);
     obj_ref_t file_entry_copy_ref = OBJ_REF_INITIAL_VALUE(file_entry_ref);
-    obj_ref_t *file_entry_ref = &file_entry_old_ref;
     struct block_tree_path tree_path;
 
     if (tr->failed) {
@@ -193,7 +192,7 @@ static void file_block_map_update(struct transaction *tr,
 
     assert(block_mac_valid(tr, &file->block_mac));
 
-    file_entry_ro = block_get(tr, &file->block_mac, NULL, file_entry_ref);
+    file_entry_ro = block_get(tr, &file->block_mac, NULL, &file_entry_ref);
     if (!file_entry_ro) {
         assert(tr->failed);
         pr_warn("transaction failed, abort\n");
@@ -235,9 +234,9 @@ static void file_block_map_update(struct transaction *tr,
              */
             file_entry_rw = block_get_copy(tr, file_entry_ro, new_block,
                                            false, &file_entry_copy_ref); // TODO: fix
-            block_put(file_entry_ro, file_entry_ref);
+            block_put(file_entry_ro, &file_entry_ref);
             file_entry_ro = file_entry_rw;
-            file_entry_ref = &file_entry_copy_ref;
+            obj_ref_transfer(&file_entry_ref, &file_entry_copy_ref);
             if (tr->failed) {
                 pr_warn("transaction failed, abort\n");
                 goto err;
@@ -271,7 +270,7 @@ static void file_block_map_update(struct transaction *tr,
     file_entry_rw->block_map = block_map->tree.root;
     file_entry_rw->size = file->size;
     block_tree_path_put_dirty(tr, &tree_path, tree_path.count,
-                              file_entry_rw, file_entry_ref);
+                              file_entry_rw, &file_entry_ref);
     file->block_mac = tree_path.entry[tree_path.count].block_mac; /* TODO: add better api */
 
     /*
@@ -286,9 +285,9 @@ static void file_block_map_update(struct transaction *tr,
 
 err:
     if (file_entry_rw) {
-        block_put_dirty_discard(file_entry_rw, file_entry_ref);
+        block_put_dirty_discard(file_entry_rw, &file_entry_ref);
     } else {
-        block_put(file_entry_ro, file_entry_ref);
+        block_put(file_entry_ro, &file_entry_ref);
     }
 }
 
