@@ -761,11 +761,6 @@ static struct ipc_channel_context *client_connect(struct ipc_port_context *paren
 
 	client_channel_ops_init(&client_session->context.ops);
 	return &client_session->context;
-
-err_derive_master_key:
-err_init_metadata:
-	free(client_session);
-	return NULL;
 }
 
 static void client_disconnect(struct ipc_channel_context *context)
