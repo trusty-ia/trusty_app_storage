@@ -1900,7 +1900,7 @@ static void block_tree_node_split(struct transaction *tr,
     }
     assert(block_mac);
     assert(block_mac_valid(tr, block_mac));
-    assert(path->tree->inserting.block = block_mac_to_block(tr, block_mac));
+    assert(path->tree->inserting.block == block_mac_to_block(tr, block_mac));
     assert(path->tree->inserting.key == append_key);
     assert(block_mac_to_block(tr, &path->tree->inserting.data) ==
            (append_data ? block_mac_to_block(tr, append_data) : 0));
