@@ -240,14 +240,6 @@ static bool use_new_super(const struct block_device *dev,
     return false;
 }
 
-/* TODO: move to obj_ref lib */
-static void obj_ref_transfer(obj_ref_t *dst, obj_ref_t *src)
-{
-    struct list_node *prev = src->ref_node.prev;
-    list_delete(&src->ref_node);
-    list_add_after(prev, &dst->ref_node);
-}
-
 /**
  * fs_init_empty - Initialize free set for empty file system
  * @fs:         File system state object.

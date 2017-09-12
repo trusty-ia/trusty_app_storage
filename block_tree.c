@@ -41,14 +41,6 @@ static bool print_internal_changes;
 static bool print_changes;
 static bool print_changes_full_tree;
 
-/* TODO: move to obj_ref lib */
-static void obj_ref_transfer(obj_ref_t *dst, obj_ref_t *src)
-{
-    struct list_node *prev = src->ref_node.prev;
-    list_delete(&src->ref_node);
-    list_add_after(prev, &dst->ref_node);
-}
-
 /**
  * struct block_tree_node - On-disk B+ tree node header and payload start
  * @iv:         initial value used for encrypt/decrypt
