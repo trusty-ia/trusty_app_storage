@@ -634,7 +634,7 @@ static int storage_file_get_size(struct storage_msg *msg,
 	void *out = NULL;
 	size_t out_size = 0;
 
-	if (req_size != sizeof(req)) {
+	if (req_size != sizeof(*req)) {
 		SS_ERR("%s: inavlid request size (%zd)\n", __func__, req_size);
 		result = STORAGE_ERR_NOT_VALID;
 		goto err_invalid_input;

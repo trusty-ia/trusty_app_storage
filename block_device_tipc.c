@@ -273,6 +273,7 @@ int block_device_tipc_init(struct block_device_tipc *state,
     SS_WARN("rpmb_block_count is %d.\n", rpmb_block_count);
 
     if (rpmb_block_count < rpmb_part2_base) {
+        ret = -1;
         SS_ERR("%s: bad rpmb size, %d\n", __func__, rpmb_block_count);
         goto err_bad_rpmb_size;
     }
