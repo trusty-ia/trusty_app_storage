@@ -923,6 +923,7 @@ bool file_delete(struct transaction *tr, const char *path)
     if (open_file) {
         struct block_mac clear = BLOCK_MAC_INITIAL_VALUE(clear);
         open_file->block_mac = clear;
+        open_file->size = 0;
     }
     return true;
 }
