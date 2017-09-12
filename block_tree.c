@@ -2119,7 +2119,7 @@ static struct block_mac block_tree_get_sibling_block(struct transaction *tr,
     }
     parent_index = block_tree_sibling_index(parent_index);
     block_mac_ptr = block_tree_node_get_child_data(path->tree, node_ro, parent_index);
-    block_mac = *block_mac_ptr; /* TODO: support variable size block_mac */
+    block_mac_copy(tr, &block_mac, block_mac_ptr);
     assert(block_mac_valid(tr, &block_mac));
     block_put(node_ro, &node_ref);
 err:
