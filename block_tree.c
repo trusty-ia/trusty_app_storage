@@ -573,7 +573,7 @@ static struct block_mac block_tree_node_get_data(const struct transaction *tr,
                                                  const struct block_tree_node *node_ro,
                                                  uint index)
 {
-    const struct block_mac empty_block_mac = BLOCK_MAC_INITIAL_VALUE(empty_block_mac);
+    struct block_mac block_mac_ret = BLOCK_MAC_INITIAL_VALUE(block_mac_ret);
     const struct block_mac *datap = NULL;
     const size_t max_key_count = block_tree_node_max_key_count(tree, node_ro);
 
@@ -593,10 +593,9 @@ static struct block_mac block_tree_node_get_data(const struct transaction *tr,
         }
     }
     if (datap) {
-        return *datap;
-    } else {
-        return empty_block_mac;
+        block_mac_copy(tr, &block_mac_ret, datap);
     }
+    return block_mac_ret;
 }
 
 
