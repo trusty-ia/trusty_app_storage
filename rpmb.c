@@ -81,12 +81,6 @@ enum rpmb_response {
     RPMB_RESP_DATA_READ                 = 0x0400,
 };
 
-struct rpmb_state {
-    struct rpmb_key     key;
-    void                *mmc_handle;
-    uint32_t            write_counter;
-};
-
 static struct rpmb_u16 rpmb_u16(uint16_t val)
 {
     struct rpmb_u16 ret = {{
@@ -300,6 +294,16 @@ int rpmb_read_counter(struct rpmb_state *state, uint32_t *write_counter, uint16_
     ret = rpmb_check_response("read counter", RPMB_RESP_GET_COUNTER,
                               &res, 1, &mac, &nonce, NULL);
 
+    /* rpmb controllor never return RPMB_RES_AUTH_FAILURE because get_counter
+     * doesn't require key input. Here RPMB_RES_AUTH_FAILURE is passed to
+     * indicate state->key is wrong.
+    */
+    if (rpmb_get_u16(res.result) == RPMB_RES_OK &&
+                CRYPTO_memcmp(res.key_mac.byte, mac.byte, sizeof(mac.byte))) {
+        fprintf(stderr, "rpmb_read_counter MAC dismatch.\n");
+        *result = RPMB_RES_AUTH_FAILURE;
+        return ret;
+    }
 err:
     if(result)
         *result = rpmb_get_u16(res.result);
