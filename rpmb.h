@@ -21,7 +21,11 @@ struct rpmb_key {
     uint8_t     byte[32];
 };
 
-struct rpmb_state;
+struct rpmb_state {
+    struct rpmb_key     key;
+    void                *mmc_handle;
+    uint32_t            write_counter;
+};
 
 #define RPMB_BUF_SIZE 256
 

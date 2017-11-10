@@ -86,6 +86,13 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
                                           const uuid_t *peer_uuid, handle_t chan_handle)
 {
 	struct rpmb_key rpmb_key;
+	struct rpmb_key rpmb_keys[BOOTLOADER_SEED_MAX_ENTRIES];
+	struct rpmb_state state;
+	uint32_t i;
+	int ret;
+	uint32_t write_counter = 0;
+	uint16_t result = -1;
+
 	int rc;
 
 	struct storage_session *session = calloc(1, sizeof(*session));
@@ -113,11 +120,36 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 	}
 
 	/* Init RPMB key */
-	rc = get_rpmb_auth_key(hwkey_session, rpmb_key.byte, sizeof(rpmb_key.byte));
+	rc = get_rpmb_auth_key(hwkey_session, &rpmb_keys, sizeof(rpmb_keys));
 	if (rc < 0) {
 		SS_ERR("%s: can't get storage auth key: (%d)\n", __func__, rc);
 		goto err_get_rpmb_key;
 	}
+	state.mmc_handle = &chan_handle;
+	for (i = 0; i < BOOTLOADER_SEED_MAX_ENTRIES; i++) {
+		memcpy_s(&state.key, 32, rpmb_keys[i].byte, 32);
+		ret = rpmb_read_counter(&state, &write_counter, &result);
+		if (ret == 0)
+			break;
+		if (result == RPMB_RES_NO_AUTH_KEY) {
+			SS_ERR("%s: key is not programmed, use the first seed to derive keys.\n", __func__);
+			break;
+		}
+		if (result != RPMB_RES_AUTH_FAILURE) {
+			SS_ERR("%s: rpmb_read_counter unexpected error: %d.\n", __func__, result);
+			goto err_get_rpmb_key;
+		}
+	}
+
+	if (i >= BOOTLOADER_SEED_MAX_ENTRIES) {
+		SS_ERR("%s: Fatal error: All keys are not match!\n", __func__);
+		goto err_get_rpmb_key;
+	}
+
+	if (i != 0)
+		SS_ERR("%s: seed changed to %d.\n", __func__, i);
+
+	memcpy_s(rpmb_key.byte, 32, rpmb_keys[i].byte, 32);
 
 	rc = block_device_tipc_init(&session->block_device, chan_handle,
 	                            &session->key, &rpmb_key);
@@ -126,6 +158,7 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 		goto err_init_block_device;
 	}
 
+	memset(rpmb_keys, 0, sizeof(rpmb_keys));
 	session->proxy_ctx.ops.on_disconnect = proxy_disconnect;
 
 	hwkey_close(hwkey_session);
@@ -133,7 +166,10 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 	return &session->proxy_ctx;
 
 err_init_block_device:
+	memset(&rpmb_key, 0, sizeof(rpmb_key));
+	memset(session->key.byte, 0, sizeof(session->key.byte));
 err_get_rpmb_key:
+	memset(rpmb_keys, 0, sizeof(rpmb_keys));
 err_get_storage_key:
 	hwkey_close(hwkey_session);
 err_hwkey_open:
