@@ -148,7 +148,7 @@ static void mark_block_tree_in_use(struct transaction *tr,
                                    data_block_t used_by_block)
 {
     struct block_tree_path path;
-    int i;
+    uint i;
 
     block_tree_walk(tr, block_tree, 0, true, &path);
     if (path.count) {
@@ -439,7 +439,7 @@ static void block_tree_test(struct transaction *tr)
 static void block_set_test(struct transaction *tr)
 {
     struct block_set sets[3];
-    int si, i;
+    uint si, i;
 
     for (si = 0; si < countof(sets); si++) {
         block_set_init(tr->fs, &sets[si]);
@@ -511,7 +511,7 @@ static void allocate_2_transactions_test_etc(struct transaction *tr,
                                              data_block_t blocks2[],
                                              size_t blocks2_count)
 {
-    int i;
+    uint i;
     struct transaction tr1;
     struct transaction tr2;
     size_t blocks_max_count = MAX(blocks1_count, blocks2_count);
@@ -574,7 +574,7 @@ static void free_test_etc(struct transaction *tr,
                           data_block_t blocks2[],
                           size_t blocks2_count)
 {
-    int i;
+    uint i;
     struct transaction tr1;
     struct transaction tr2;
     size_t blocks_max_count = MAX(blocks1_count, blocks2_count);
@@ -692,7 +692,7 @@ static void allocate_frag_test(struct transaction *tr)
 
 static void allocate_free_same_test(struct transaction *tr)
 {
-    int i;
+    uint i;
     printf("%s: start allocate then free same test\n", __func__);
     for (i = 0; i < countof(allocated); i++) {
         allocated[i] = block_allocate(tr);
@@ -726,7 +726,7 @@ static void allocate_free_same_test(struct transaction *tr)
 
 static void allocate_free_other_test(struct transaction *tr)
 {
-    int i;
+    uint i;
 
     printf("%s: start allocate then free some other test\n", __func__);
     for (i = 0; i < countof(allocated); i++) {
@@ -796,7 +796,7 @@ static void free_frag_rem_test(struct transaction *tr)
 
 static void free_test(struct transaction *tr)
 {
-    int i;
+    uint i;
 
     free_test_etc(tr, allocated, countof(allocated), NULL, 0);
 
@@ -880,10 +880,10 @@ static void file_allocate_all_test(struct transaction *master_tr,
                                    const char *path,
                                    enum file_create_mode create)
 {
-    int i;
-    int j;
-    int done;
-    int count;
+    uint i;
+    uint j;
+    uint done;
+    uint count;
     struct file_handle file[tr_count];
     data_block_t file_size[tr_count];
     struct transaction tr[tr_count];
@@ -1580,6 +1580,76 @@ static void file_delete_many_test(struct transaction *tr)
     }
 }
 
+struct file_iterate_many_state {
+    struct file_iterate_state iter;
+    uint64_t found;
+    bool stop;
+    char last_path[10];
+};
+
+static bool file_iterate_many_iter(struct file_iterate_state *iter,
+                                   struct transaction *tr,
+                                   const struct block_mac *block_mac,
+                                   bool added, bool removed)
+{
+    struct file_iterate_many_state *miter =
+        containerof(iter, struct file_iterate_many_state, iter);
+    const struct file_info *file_info;
+    obj_ref_t ref = OBJ_REF_INITIAL_VALUE(ref);
+    int i;
+    int ret;
+    uint64_t mask;
+
+    file_info = file_get_info(tr, block_mac, &ref);
+
+    ret = sscanf(file_info->path, "test%d", &i);
+
+    assert(strlen(file_info->path) < sizeof(miter->last_path));
+    strcpy(miter->last_path, file_info->path);
+
+    file_info_put(file_info, &ref);
+
+    assert(ret == 1);
+    mask = (1ULL << i);
+    assert(!(miter->found & mask));
+    miter->found |= mask;
+
+    return miter->stop;
+}
+
+static void file_iterate_many_test(struct transaction *tr)
+{
+    struct file_iterate_many_state state = {
+        .iter.file =  file_iterate_many_iter,
+        .found = 0,
+        .stop = false,
+    };
+    uint64_t last_found = 0;
+    bool ret;
+
+    /* iterate over all files in one pass */
+    ret = file_iterate(tr, NULL, false, &state.iter);
+    assert(state.found = (1ull << file_test_many_file_count) - 1);
+    assert(ret);
+    ret = file_iterate(tr, NULL, true, &state.iter);
+    assert(ret);
+
+    /* lookup one file at a time */
+    state.found = 0;
+    state.stop = true;
+    ret = file_iterate(tr, NULL, false, &state.iter);
+    assert(ret);
+    while (state.found != last_found) {
+        last_found = state.found;
+        ret = file_iterate(tr, state.last_path, false, &state.iter);
+        assert(ret);
+    }
+    assert(state.found = (1ull << file_test_many_file_count) - 1);
+    ret = file_iterate(tr, NULL, true, &state.iter);
+    assert(ret);
+}
+
+
 static void file_allocate_all1_test(struct transaction *tr)
 {
     file_allocate_all_test(tr, 1, 0, 1, "test1", FILE_OPEN_CREATE);
@@ -1805,7 +1875,7 @@ int main(int argc, const char *argv[])
         },
     };
     struct transaction tr = {};
-    int i;
+    uint i;
     bool test_remount = true;
 
     if (argc > 1) {
