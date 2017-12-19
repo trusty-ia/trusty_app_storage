@@ -19,6 +19,7 @@
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 typedef unsigned long addr_t; /* used by list.h */
+typedef unsigned int uint;
 
 #include <compiler.h>
 #include <stddef.h>

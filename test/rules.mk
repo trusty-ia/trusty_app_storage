@@ -15,9 +15,9 @@
 
 LOCAL_DIR := $(GET_LOCAL_DIR)
 
-TOOL := $(SAVED_BUILDDIR)/host_tests/storage_test
+HOST_TEST := storage_test
 
-SRCS := \
+HOST_SRCS := \
 	$(LOCAL_DIR)/../block_allocator.c \
 	$(LOCAL_DIR)/../block_cache.c \
 	$(LOCAL_DIR)/../block_mac.c \
@@ -30,24 +30,11 @@ SRCS := \
 	$(LOCAL_DIR)/../transaction.c \
 	$(LOCAL_DIR)/block_test.c \
 
-$(TOOL): TOOL_CFLAGS := -DBUILD_STORAGE_TEST=1
+HOST_FLAGS := -DBUILD_STORAGE_TEST=1 -include $(LOCAL_DIR)/trusty_std.h
 
-$(TOOL): FORCE_INCLUDE := \
-	-include $(LOCAL_DIR)/trusty_std.h \
+HOST_LIBS := \
+	m \
+	crypto \
+	ssl \
 
-$(TOOL): TOOL_INCLUDE := $(LOCAL_DIR)
-
-$(TOOL): $(SRCS)
-	@echo building $@
-	@$(MKDIR)
-	@gcc $^ $(FORCE_INCLUDE) -I$(TOOL_INCLUDE) $(TOOL_CFLAGS) $(subst -I,-idirafter,$(GLOBAL_INCLUDES)) -lm -lcrypto -lssl -g -Wall -Werror -o $@
-
-host_tests: $(TOOL)
-
-$(TOOL)_run: $(TOOL) .PHONY
-	@echo running $<
-	gdb -batch -ex run -ex where $(TOOL)
-
-run_host_tests: $(TOOL)_run .PHONY
-
-LOCAL_DIR :=
+include make/host_test.mk
