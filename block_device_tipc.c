@@ -54,7 +54,7 @@
 
 #define BLOCK_SIZE_RPMB_BLOCKS (BLOCK_SIZE_RPMB / RPMB_BUF_SIZE)
 
-STATIC_ASSERT(BLOCK_SIZE_RPMB_BLOCKS == 1 || BLOCK_SIZE_RPMB_BLOCKS == 2);
+STATIC_ASSERT(BLOCK_SIZE_RPMB_BLOCKS == 2);
 STATIC_ASSERT(BLOCK_SIZE_RPMB_BLOCKS * RPMB_BUF_SIZE == BLOCK_SIZE_RPMB);
 
 STATIC_ASSERT(BLOCK_COUNT_RPMB == 0 || BLOCK_COUNT_RPMB >= 8);
@@ -232,10 +232,11 @@ int block_device_tipc_init(struct block_device_tipc *state,
     uint8_t dummy;
     uint32_t rpmb_block_count;
     uint32_t rpmb_part1_block_count = 2;
-    uint16_t rpmb_part1_base = 512; /* first 256K is reserved for Bootloader */
+    /* block 512 is reserved for key migration.
+     * block 0~511(256KB) are reserved for M and O alignment.
+     */
+    uint16_t rpmb_part1_base = 512 + 1;
     uint16_t rpmb_part2_base = rpmb_part1_base + rpmb_part1_block_count;
-    uint32_t write_counter = 0;
-    uint16_t result = -1;
 
     state->ipc_handle = ipc_handle;
 
@@ -244,18 +245,6 @@ int block_device_tipc_init(struct block_device_tipc *state,
     if (ret < 0) {
         SS_ERR("%s: rpmb_init failed (%d)\n", __func__, ret);
         goto err_rpmb_init;
-    }
-
-    ret = rpmb_read_counter(state->rpmb_state, &write_counter, &result);
-    SS_WARN("rpmb_read_counter ret is %d, write counter is %d.\n", ret, write_counter);
-
-    if (ret < 0) {
-        SS_ERR("%s: rpmb_read_counter failed (%d), result is 0x%X.\n", __func__, ret, result);
-        if(result == RPMB_RES_NO_AUTH_KEY)
-        {
-            SS_ERR("rpmb key is not programmed.\n");
-        }
-        goto err_read_counter;
     }
 
     if (BLOCK_COUNT_RPMB) {
@@ -273,8 +262,8 @@ int block_device_tipc_init(struct block_device_tipc *state,
     SS_WARN("rpmb_block_count is %d.\n", rpmb_block_count);
 
     if (rpmb_block_count < rpmb_part2_base) {
-        ret = -1;
         SS_ERR("%s: bad rpmb size, %d\n", __func__, rpmb_block_count);
+        ret = -1;
         goto err_bad_rpmb_size;
     }
 
@@ -317,6 +306,7 @@ int block_device_tipc_init(struct block_device_tipc *state,
     if (ret < 0) {
         /* RPMB fs only */
         state->dev_ns.block_count = 0;
+        SS_ERR("TD PORT is not created.\n");
         return 0;
     }
 
