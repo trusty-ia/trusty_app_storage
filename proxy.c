@@ -77,50 +77,62 @@ static int get_rpmb_auth_key(hwkey_session_t session, uint8_t *key,
 }
 
 /* if rpmb is not programmed, use seed[0] derived rpmb auth key to program.
- * else, test up to BOOTLOADER_SEED_MAX_ENTRIES keys to get the correct one.
+ * else, test up to num_seeds keys to get the correct one.
  */
 static int get_programmed_rpmb_auth_key(handle_t chan_handle, hwkey_session_t hwkey_session)
 {
-	struct rpmb_key rpmb_keys[BOOTLOADER_SEED_MAX_ENTRIES];
+	struct rpmb_key rpmb_keys[CSE_SEED_MAX_ENTRIES];
+	trusty_device_info_t dev_info = {0};
 	struct rpmb_state state;
 	uint32_t i;
 	int rc = -1;
 	uint32_t write_counter = 0;
 	uint16_t result = -1;
 
+	if (NO_ERROR != get_device_info(&dev_info, GET_NONE)) {
+		SS_ERR("%s:failed to get device infomation\n", __func__);
+		goto out;
+	}
+
 	/* Init RPMB key */
-	rc = get_rpmb_auth_key(hwkey_session, (uint8_t *)&rpmb_keys, sizeof(rpmb_keys));
-	if (rc < 0) {
-		SS_ERR("%s: can't get storage auth key: (%d)\n", __func__, rc);
-		goto out;
-	}
-
-	state.mmc_handle = &chan_handle;
-	for (i = 0; i < BOOTLOADER_SEED_MAX_ENTRIES; i++) {
-		memcpy_s(&state.key, 32, rpmb_keys[i].byte, 32);
-		rc = rpmb_read_counter(&state, &write_counter, &result);
-		if (rc == 0)
-			break;
-		if (result == RPMB_RES_NO_AUTH_KEY) {
-			SS_ERR("%s: key is not programmed.\n", __func__);
+	if (dev_info.sec_info.platform == APL_PLATFORM) {
+		rc = get_rpmb_auth_key(hwkey_session, (uint8_t *)&rpmb_keys, sizeof(rpmb_keys));
+		if (rc < 0) {
+			SS_ERR("%s: can't get storage auth key: (%d)\n", __func__, rc);
 			goto out;
 		}
-		if (result != RPMB_RES_AUTH_FAILURE) {
-			SS_ERR("%s: rpmb_read_counter unexpected error: %d.\n", __func__, result);
+
+		state.mmc_handle = &chan_handle;
+		for (i = 0; i < dev_info.sec_info.num_seeds; i++) {
+			memcpy_s(&state.key, 32, rpmb_keys[i].byte, 32);
+			rc = rpmb_read_counter(&state, &write_counter, &result);
+			if (rc == 0)
+				break;
+			if (result == RPMB_RES_NO_AUTH_KEY) {
+				SS_ERR("%s: key is not programmed.\n", __func__);
+				goto out;
+			}
+			if (result != RPMB_RES_AUTH_FAILURE) {
+				SS_ERR("%s: rpmb_read_counter unexpected error: %d.\n", __func__, result);
+				goto out;
+			}
+		}
+
+		if (i >= dev_info.sec_info.num_seeds) {
+			SS_ERR("%s: Fatal error: All keys are not match!\n", __func__);
 			goto out;
 		}
+
+		if (i != 0)
+			SS_ERR("%s: seed changed to %d.\n", __func__, i);
+
+		memcpy_s(g_rpmb_key, 32, rpmb_keys[i].byte, 32);
+		rc = 0;
+	} else {
+		//TODO: ICL and CWP rpmb key.
+		SS_ERR("%s: platform is not APL!\n", __func__);
+		assert(0);
 	}
-
-	if (i >= BOOTLOADER_SEED_MAX_ENTRIES) {
-		SS_ERR("%s: Fatal error: All keys are not match!\n", __func__);
-		goto out;
-	}
-
-	if (i != 0)
-		SS_ERR("%s: seed changed to %d.\n", __func__, i);
-
-	memcpy_s(g_rpmb_key, 32, rpmb_keys[i].byte, 32);
-	rc = 0;
 
 out:
 	secure_memzero(rpmb_keys, sizeof(rpmb_keys));
