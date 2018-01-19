@@ -64,3 +64,7 @@ int decrypt(const struct key *key,
             void *data_in_out,
             size_t data_size,
             const struct iv *iv_in);
+
+void crypt_init(void);
+
+void crypt_shutdown(void);
