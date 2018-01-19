@@ -18,12 +18,68 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 
 #include "crypt.h"
+
+/* Backwards compatability */
+#if OPENSSL_VERSION_NUMBER < 0x10100000
+static void EVP_CIPHER_CTX_reset(EVP_CIPHER_CTX *ctx) {
+    EVP_CIPHER_CTX_cleanup(ctx);
+    EVP_CIPHER_CTX_init(ctx);
+}
+
+static HMAC_CTX *HMAC_CTX_new(void) {
+    HMAC_CTX *ctx = malloc(sizeof(HMAC_CTX));
+    if (ctx) {
+        HMAC_CTX_init(ctx);
+    }
+    return ctx;
+}
+
+static void HMAC_CTX_reset(HMAC_CTX *ctx) {
+    HMAC_CTX_cleanup(ctx);
+    HMAC_CTX_init(ctx);
+}
+
+static void HMAC_CTX_free(HMAC_CTX *ctx) {
+    if (ctx) {
+        HMAC_CTX_cleanup(ctx);
+        free(ctx);
+    }
+}
+#endif
+
+/*
+ * The OpenSSL 1.1.0 API requires we allocate these dynamically. Cache them
+ * globally to avoid alocator thrash and the potential for another dynamic
+ * failure.
+ */
+static EVP_CIPHER_CTX *cipher_ctx;
+static HMAC_CTX *hmac_ctx;
+
+void crypt_init(void) {
+    assert(!cipher_ctx);
+    assert(!hmac_ctx);
+
+    cipher_ctx = EVP_CIPHER_CTX_new();
+    assert(cipher_ctx);
+
+    hmac_ctx = HMAC_CTX_new();
+    assert(hmac_ctx);
+}
+
+void crypt_shutdown(void) {
+    EVP_CIPHER_CTX_free(cipher_ctx);
+    cipher_ctx = NULL;
+
+    HMAC_CTX_free(hmac_ctx);
+    hmac_ctx = NULL;
+}
 
 /**
  * crypt - Helper function for encrypt and decrypt.
@@ -40,7 +96,6 @@ static int crypt(const struct key *key, void *data_in_out, size_t data_size,
 {
     int evp_ret;
     const EVP_CIPHER *cipher;
-    EVP_CIPHER_CTX ctx;
     int out_data_size;
     size_t key_len;
 
@@ -58,24 +113,26 @@ static int crypt(const struct key *key, void *data_in_out, size_t data_size,
         fprintf(stderr, "key too small for selected cipher, %zd < %zd\n",
                 sizeof(*key), key_len);
         evp_ret = 0;
-        goto err_bad_key_len;
+        goto err;
     }
 
-    EVP_CIPHER_CTX_init(&ctx);
-    evp_ret = EVP_CipherInit_ex(&ctx, cipher, NULL,
+    assert(cipher_ctx);
+    EVP_CIPHER_CTX_reset(cipher_ctx);
+
+    evp_ret = EVP_CipherInit_ex(cipher_ctx, cipher, NULL,
                                 key->byte, iv->byte, encrypt);
     if (!evp_ret) {
         fprintf(stderr, "EVP_CipherInit_ex failed\n");
         goto err;
     }
 
-    evp_ret = EVP_CIPHER_CTX_set_padding(&ctx, 0);
+    evp_ret = EVP_CIPHER_CTX_set_padding(cipher_ctx, 0);
     if (!evp_ret) {
         fprintf(stderr, "EVP_CIPHER_CTX_set_padding failed\n");
         goto err;
     }
 
-    evp_ret = EVP_CipherUpdate(&ctx, data_in_out, &out_data_size,
+    evp_ret = EVP_CipherUpdate(cipher_ctx, data_in_out, &out_data_size,
                                 data_in_out, data_size);
     if (!evp_ret) {
         fprintf(stderr, "EVP_CipherUpdate failed\n");
@@ -88,15 +145,13 @@ static int crypt(const struct key *key, void *data_in_out, size_t data_size,
         goto err;
     }
 
-    evp_ret = EVP_CipherFinal_ex(&ctx, NULL, &out_data_size);
+    evp_ret = EVP_CipherFinal_ex(cipher_ctx, NULL, &out_data_size);
     if (!evp_ret) {
         fprintf(stderr, "EVP_CipherFinal_ex failed\n");
         goto err;
     }
 
 err:
-    EVP_CIPHER_CTX_cleanup(&ctx);
-err_bad_key_len:
     return evp_ret ? 0 : -1;
 }
 
@@ -139,23 +194,23 @@ int calculate_mac(const struct key *key, struct mac *mac,
     int hmac_ret;
     unsigned int md_len;
     unsigned char mac_buf[EVP_MAX_MD_SIZE];
-    HMAC_CTX hmac_ctx;
 
-    HMAC_CTX_init(&hmac_ctx);
+    assert(hmac_ctx);
+    HMAC_CTX_reset(hmac_ctx);
 
-    hmac_ret = HMAC_Init_ex(&hmac_ctx, key, sizeof(*key), EVP_sha256(), NULL);
+    hmac_ret = HMAC_Init_ex(hmac_ctx, key, sizeof(*key), EVP_sha256(), NULL);
     if (!hmac_ret) {
         fprintf(stderr, "HMAC_Init_ex failed\n");
         goto err;
     }
 
-    hmac_ret = HMAC_Update(&hmac_ctx, data, data_size);
+    hmac_ret = HMAC_Update(hmac_ctx, data, data_size);
     if (!hmac_ret) {
         fprintf(stderr, "HMAC_Update failed\n");
         goto err;
     }
 
-    hmac_ret = HMAC_Final(&hmac_ctx, mac_buf, &md_len);
+    hmac_ret = HMAC_Final(hmac_ctx, mac_buf, &md_len);
     if (!hmac_ret) {
         fprintf(stderr, "HMAC_Final failed\n");
         goto err;
@@ -168,7 +223,6 @@ int calculate_mac(const struct key *key, struct mac *mac,
     memcpy(mac, mac_buf, sizeof(*mac));
 
 err:
-    HMAC_CTX_cleanup(&hmac_ctx);
     return hmac_ret ? 0 : -1;
 }
 

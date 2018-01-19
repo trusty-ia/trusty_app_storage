@@ -1680,6 +1680,7 @@ int main(int argc, const char *argv[])
     block_tree_check_config(&dev);
     block_tree_check_config(&dev256);
     block_tree_check_config_done();
+    crypt_init();
     block_cache_init();
 
     fs_init(&fs, &key, &dev, &dev, true);
@@ -1713,6 +1714,7 @@ int main(int argc, const char *argv[])
     block_set_print(&tr, &tr.fs->free);
     stats_timer_print();
     transaction_free(&tr);
+    crypt_shutdown();
 
     printf("%s: done\n", __func__);
 

@@ -19,6 +19,7 @@
 #include <interface/storage/storage.h>
 
 #include "block_cache.h"
+#include "crypt.h"
 #include "ipc.h"
 #include "proxy.h"
 #include "tipc_limits.h"
@@ -33,6 +34,7 @@ int main(void)
 		}
 	};
 
+	crypt_init();
 	block_cache_init();
 
 	int rc = ipc_port_create(&ctx, STORAGE_DISK_PROXY_PORT, 1, STORAGE_MAX_BUFFER_SIZE,
