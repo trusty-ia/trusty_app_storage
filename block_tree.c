@@ -238,7 +238,7 @@ static void block_tree_node_shift(const struct block_tree *tree,
             entry_size = tree->key_size;
         } else {
             /* data/child */
-            base += tree->key_size * max_count;
+            base = node_rw->data + tree->key_size * max_count;
             entry_size = tree->child_data_size[is_leaf];
             if (!is_leaf) {
                 /* internal nodes have one more child than keys */
