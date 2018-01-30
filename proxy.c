@@ -89,7 +89,7 @@ static int get_programmed_rpmb_auth_key(handle_t chan_handle, hwkey_session_t hw
 	uint32_t write_counter = 0;
 	uint16_t result = -1;
 
-	if (NO_ERROR != get_device_info(&dev_info, GET_NONE)) {
+	if (NO_ERROR != get_device_info(&dev_info)) {
 		SS_ERR("%s:failed to get device infomation\n", __func__);
 		goto out;
 	}
@@ -137,6 +137,7 @@ static int get_programmed_rpmb_auth_key(handle_t chan_handle, hwkey_session_t hw
 out:
 	secure_memzero(rpmb_keys, sizeof(rpmb_keys));
 	secure_memzero(&state, sizeof(struct rpmb_state));
+	secure_memzero(&dev_info, sizeof(trusty_device_info_t));
 
 	return rc;
 }
