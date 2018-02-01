@@ -19,6 +19,7 @@
 #include <lk/list.h>
 #include <stdint.h>
 
+typedef unsigned int uint;
 typedef unsigned long long data_block_t;
 
 /**

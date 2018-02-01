@@ -16,6 +16,7 @@
 
 #include <assert.h>
 #include <limits.h>
+#include <lk/macros.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#include <uapi/err.h>
 #include <errno.h>
 #include <lk/compiler.h>
 #include <stdint.h>
