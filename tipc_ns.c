@@ -46,7 +46,7 @@ static inline int check_response(enum storage_cmd cmd, struct storage_msg *msg,
                                  size_t read_len)
 {
 	if (read_len < sizeof(*msg)) {
-		SS_ERR("%s: invalid response size %d\n", __func__, read_len);
+		SS_ERR("%s: invalid response size %ld\n", __func__, read_len);
 		return ERR_IO;
 	}
 
@@ -185,7 +185,7 @@ int ns_open_file(handle_t ipc_handle, const char *fname,
 	}
 
 	if (bytes_read != sizeof(msg) + sizeof(resp)) {
-		SS_ERR("%s: open failed, invalid response size (%d !=  %d)\n",
+		SS_ERR("%s: open failed, invalid response size (%ld !=  %ld)\n",
 		       __func__, bytes_read, sizeof(resp));
 		return ERR_NOT_VALID;
 	}
