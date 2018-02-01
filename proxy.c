@@ -82,7 +82,7 @@ static int get_rpmb_auth_key(hwkey_session_t session, uint8_t *key,
 static int get_programmed_rpmb_auth_key(handle_t chan_handle, hwkey_session_t hwkey_session)
 {
 	struct rpmb_key rpmb_keys[CSE_SEED_MAX_ENTRIES];
-	trusty_device_info_t dev_info = {0};
+	trusty_device_info_t dev_info;
 	struct rpmb_state state;
 	uint32_t i;
 	int rc = -1;
@@ -150,7 +150,6 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 	uint8_t buf[256] = {0};
 	struct crypto_context crypto_ctx = {0};
 	struct crypto_context updated_crypto_ctx = {0};
-	uint32_t i;
 
 	struct storage_session *session = calloc(1, sizeof(*session));
 	if (session == NULL) {
