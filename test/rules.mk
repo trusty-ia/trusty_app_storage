@@ -30,7 +30,7 @@ HOST_SRCS := \
 	$(LOCAL_DIR)/../transaction.c \
 	$(LOCAL_DIR)/block_test.c \
 
-HOST_FLAGS := -DBUILD_STORAGE_TEST=1 -include $(LOCAL_DIR)/trusty_std.h
+HOST_FLAGS := -DBUILD_STORAGE_TEST=1
 
 HOST_LIBS := \
 	m \

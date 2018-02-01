@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+
 #include <uapi/err.h>
 #include <lk/compiler.h>
 #include <stdint.h>
@@ -334,3 +335,4 @@ int ns_write_pos(handle_t ipc_handle, ns_handle_t handle, ns_off_t pos,
 
 	return data_size;
 }
+
