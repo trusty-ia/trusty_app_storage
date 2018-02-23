@@ -22,8 +22,9 @@
 
 #include <interface/storage/storage.h>
 #include <lib/hwkey/hwkey.h>
-#include "trusty_key_migration.h"
+#include <openssl/mem.h>
 
+#include "trusty_key_migration.h"
 #include "ipc.h"
 #include "rpmb.h"
 #include "session.h"
@@ -98,43 +99,73 @@ static int get_programmed_rpmb_auth_key(handle_t chan_handle, hwkey_session_t hw
 	}
 
 	/* Init RPMB key */
-	if (dev_info.sec_info.platform == APL_PLATFORM) {
-		rc = get_rpmb_auth_key(hwkey_session, (uint8_t *)&rpmb_keys, sizeof(rpmb_keys));
-		if (rc < 0) {
-			SS_ERR("%s: can't get storage auth key: (%d)\n", __func__, rc);
-			goto out;
-		}
+	switch (dev_info.sec_info.platform)
+	{
+		case APL_PLATFORM:
+			rc = get_rpmb_auth_key(hwkey_session, (uint8_t *)&rpmb_keys, sizeof(rpmb_keys));
+			if (rc < 0) {
+				SS_ERR("%s: can't get storage auth key: (%d)\n", __func__, rc);
+				goto out;
+			}
 
-		state.mmc_handle = &chan_handle;
-		for (i = 0; i < dev_info.sec_info.num_seeds; i++) {
-			memcpy_s(&state.key, 32, rpmb_keys[i].byte, 32);
+			state.mmc_handle = &chan_handle;
+			for (i = 0; i < dev_info.sec_info.num_seeds; i++) {
+				memcpy_s(&state.key, 32, rpmb_keys[i].byte, 32);
+				rc = rpmb_read_counter(&state, &write_counter, &result);
+				if (rc == 0)
+					break;
+				if (result == RPMB_RES_NO_AUTH_KEY) {
+					SS_ERR("%s: key is not programmed.\n", __func__);
+					goto out;
+				}
+				if (result != RPMB_RES_AUTH_FAILURE) {
+					SS_ERR("%s: rpmb_read_counter unexpected error: %d.\n", __func__, result);
+					goto out;
+				}
+			}
+
+			if (i >= dev_info.sec_info.num_seeds) {
+				SS_ERR("%s: Fatal error: All keys are not match!\n", __func__);
+				goto out;
+			}
+
+			if (i != 0)
+				SS_ERR("%s: seed changed to %d.\n", __func__, i);
+			memcpy_s(g_rpmb_key, 32, rpmb_keys[i].byte, 32);
+			rc = 0;
+
+			break;
+
+		case ICL_PLATFORM:
+			rc = get_rpmb_auth_key(hwkey_session, (uint8_t *)&rpmb_keys, sizeof(rpmb_keys));
+			if (rc < 0) {
+				SS_ERR("%s: icl can't get storage auth key: (%d)\n", __func__, rc);
+				goto out;
+			}
+
+			state.mmc_handle = &chan_handle;
+			memcpy_s(&state.key, 32, rpmb_keys[0].byte, 32);
+
+			for (i = 0; i < 32; i++) {
+				SS_ERR("%s: icl rpmb_key:(%d)(0x%x)\n", __func__, i, rpmb_keys[0].byte[i]);
+			}
+
 			rc = rpmb_read_counter(&state, &write_counter, &result);
-			if (rc == 0)
-				break;
-			if (result == RPMB_RES_NO_AUTH_KEY) {
-				SS_ERR("%s: key is not programmed.\n", __func__);
+			if (rc != 0) {
+				SS_ERR("%s: icl rpmb_read_counter unexpected error: %d.\n", __func__, result);
 				goto out;
 			}
-			if (result != RPMB_RES_AUTH_FAILURE) {
-				SS_ERR("%s: rpmb_read_counter unexpected error: %d.\n", __func__, result);
-				goto out;
-			}
-		}
 
-		if (i >= dev_info.sec_info.num_seeds) {
-			SS_ERR("%s: Fatal error: All keys are not match!\n", __func__);
-			goto out;
-		}
+			memcpy_s(g_rpmb_key, 32, rpmb_keys[0].byte, 32);
+			rc = 0;
 
-		if (i != 0)
-			SS_ERR("%s: seed changed to %d.\n", __func__, i);
+			break;
 
-		memcpy_s(g_rpmb_key, 32, rpmb_keys[i].byte, 32);
-		rc = 0;
-	} else {
-		//TODO: ICL and CWP rpmb key.
-		SS_ERR("%s: platform is not APL!\n", __func__);
-		assert(0);
+		default:
+			//TODO: CWP rpmb key.
+			SS_ERR("%s: platform(%d) is not handled!\n", __func__, dev_info.sec_info.platform);
+			assert(0);
+			break;
 	}
 
 out:
@@ -218,7 +249,7 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 				SS_ERR("%s: hwkey_transfer_enc_seeds failed.\n", __func__);
 				goto err_init_connection;
 			}
-			if (memcmp(&crypto_ctx, &updated_crypto_ctx, sizeof(struct crypto_context))) {
+			if (CRYPTO_memcmp(&crypto_ctx, &updated_crypto_ctx, sizeof(struct crypto_context))) {
 				SS_ERR("%s: SEED CHANGED!!! Rewrite to rpmb.\n", __func__);
 				if (memcpy_s(buf, sizeof(buf), &updated_crypto_ctx, sizeof(struct crypto_context))) {
 					SS_ERR("%s: failed to copy updated_crypto_ctx to buf.\n", __func__);
