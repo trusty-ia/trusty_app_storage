@@ -197,7 +197,7 @@ static int rpmb_mac(struct rpmb_key key,
         goto err;
     }
     for (i = 0; i < packet_count; i++) {
-        STATIC_ASSERT(sizeof(*packet) - offsetof(__typeof(*packet), data) == 284);
+        STATIC_ASSERT(sizeof(*packet) - offsetof(__typeof__(*packet), data) == 284);
         hmac_ret = HMAC_Update(&hmac_ctx, packet[i].data, 284);
         if (!hmac_ret) {
             fprintf(stderr, "HMAC_Update failed\n");
