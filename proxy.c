@@ -22,7 +22,7 @@
 
 #include <interface/storage/storage.h>
 #include <lib/hwkey/hwkey.h>
-#include <trusty_key_migration.h>
+#include "trusty_key_migration.h"
 
 #include "ipc.h"
 #include "rpmb.h"
