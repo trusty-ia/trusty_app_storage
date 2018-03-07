@@ -43,6 +43,7 @@ MODULE_DEPS := \
 	lib/hwkey \
 	lib/libc-trusty \
 	lib/boringssl \
+	lib/hwkey_migration
 
 MODULE_DEPS += \
 	app/storage/test \
