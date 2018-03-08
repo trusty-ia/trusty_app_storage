@@ -28,6 +28,9 @@
 #include "rpmb.h"
 #include "session.h"
 
+#include "trusty_device_info.h"
+#include "trusty_syscalls_x86.h"
+
 #define SS_ERR(args...)  fprintf(stderr, "ss: " args)
 #define CRYPTO_CONTEXT_RPMB_ADDR	(1024)
 
