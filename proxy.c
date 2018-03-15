@@ -15,8 +15,8 @@
  */
 
 #include <assert.h>
-#include <err.h>
-#include <list.h> // for containerof
+#include <uapi/err.h>
+#include <lk/list.h> // for containerof
 #include <stdlib.h>
 #include <string.h>
 
