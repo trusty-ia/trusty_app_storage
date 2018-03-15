@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <list.h>
+#include <lk/list.h>
 #include <stdint.h>
 
 typedef unsigned long long data_block_t;

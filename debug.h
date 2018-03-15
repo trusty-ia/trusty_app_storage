@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <trace.h>
+#include <lk/trace.h>
 
 enum {
     TRACE_LEVEL_NONE,

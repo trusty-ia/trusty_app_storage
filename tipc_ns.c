@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#include <err.h>
-#include <compiler.h>
+#include <uapi/err.h>
+#include <lk/compiler.h>
 #include <stdint.h>
 #include <string.h>
 #include <trusty_ipc.h>
