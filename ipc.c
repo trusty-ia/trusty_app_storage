@@ -25,7 +25,11 @@
 
 #define MSG_BUF_MAX_SIZE 4096
 
-#define TLOGE(args...) 	fprintf(stderr, "ipc: " args)
+#ifndef USER_BUILD
+#define TLOGE(args...) fprintf(stderr, "ipc: " args)
+#else
+#define TLOGE(args...) do {} while(0)
+#endif
 
 static void *msg_buf;
 static size_t msg_buf_size;

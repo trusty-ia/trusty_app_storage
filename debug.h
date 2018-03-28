@@ -43,8 +43,16 @@ enum {
 #define LOCAL_TRACE_ERR TRACE_LEVEL_ERROR
 #endif
 
+#ifndef USER_BUILD
 #define pr_err(x...) LTRACEF_LEVEL(TRACE_LEVEL_ERROR, x)
 #define pr_warn(x...) LTRACEF_LEVEL(TRACE_LEVEL_WARNING, x)
 #define pr_init(x...) LTRACEF_LEVEL(TRACE_LEVEL_INIT, x)
 #define pr_write(x...) LTRACEF_LEVEL(TRACE_LEVEL_WRITE, x)
 #define pr_read(x...) LTRACEF_LEVEL(TRACE_LEVEL_READ, x)
+#else
+#define pr_err(x...)   do { } while (0)
+#define pr_warn(x...)  do { } while (0)
+#define pr_init(x...)  do { } while (0)
+#define pr_write(x...) do { } while (0)
+#define pr_read(x...)  do { } while (0)
+#endif
