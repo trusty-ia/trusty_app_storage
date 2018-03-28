@@ -32,8 +32,14 @@
 #include "trusty_device_info.h"
 #include "trusty_syscalls_x86.h"
 
+#ifndef USER_BUILD
 #define SS_ERR(args...)  fprintf(stderr, "ss: " args)
 #define SS_WARN(args...)  fprintf(stderr, "ss: " args)
+#else
+#define SS_ERR(args...)  do { } while (0)
+#define SS_WARN(args...)  do { } while (0)
+#endif
+
 #define CRYPTO_CONTEXT_RPMB_ADDR	(1024)
 
 #define CRYPTO_CTX_INITIAL_VALUE(crypto_ctx) {0, {0}, {0}, {0}, {0}, 0, {0}}

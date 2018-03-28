@@ -63,8 +63,13 @@ STATIC_ASSERT(BLOCK_SIZE_MAIN >= 256);
 STATIC_ASSERT(BLOCK_COUNT_MAIN >= 8);
 STATIC_ASSERT(BLOCK_SIZE_MAIN >= BLOCK_SIZE_RPMB);
 
-#define SS_ERR(args...)  fprintf(stderr, "ss: " args)
+#ifndef USER_BUILD
 #define SS_WARN(args...)  fprintf(stderr, "ss: " args)
+#define SS_ERR(args...)   fprintf(stderr, "ss: " args)
+#else
+#define SS_WARN(args...)  do { } while (0)
+#define SS_ERR(args...)   do { } while (0)
+#endif
 #define SS_DBG_IO(args...)  do {} while(0)
 
 static int rpmb_check(struct block_device_tipc *state, uint16_t block)
