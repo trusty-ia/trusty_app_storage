@@ -33,6 +33,7 @@
 #include "trusty_syscalls_x86.h"
 
 #define SS_ERR(args...)  fprintf(stderr, "ss: " args)
+#define SS_WARN(args...)  fprintf(stderr, "ss: " args)
 #define CRYPTO_CONTEXT_RPMB_ADDR	(1024)
 
 static bool init_connection = true;
@@ -93,80 +94,44 @@ static int get_programmed_rpmb_auth_key(handle_t chan_handle, hwkey_session_t hw
 	uint32_t write_counter = 0;
 	uint16_t result = -1;
 
+	memset(&dev_info, 0, sizeof(dev_info));
 	if (NO_ERROR != get_device_info(&dev_info)) {
 		SS_ERR("%s:failed to get device infomation\n", __func__);
 		goto out;
 	}
 
 	/* Init RPMB key */
-	switch (dev_info.sec_info.platform)
-	{
-		case APL_PLATFORM:
-			rc = get_rpmb_auth_key(hwkey_session, (uint8_t *)&rpmb_keys, sizeof(rpmb_keys));
-			if (rc < 0) {
-				SS_ERR("%s: can't get storage auth key: (%d)\n", __func__, rc);
-				goto out;
-			}
-
-			state.mmc_handle = &chan_handle;
-			for (i = 0; i < dev_info.sec_info.num_seeds; i++) {
-				memcpy_s(&state.key, 32, rpmb_keys[i].byte, 32);
-				rc = rpmb_read_counter(&state, &write_counter, &result);
-				if (rc == 0)
-					break;
-				if (result == RPMB_RES_NO_AUTH_KEY) {
-					SS_ERR("%s: key is not programmed.\n", __func__);
-					goto out;
-				}
-				if (result != RPMB_RES_AUTH_FAILURE) {
-					SS_ERR("%s: rpmb_read_counter unexpected error: %d.\n", __func__, result);
-					goto out;
-				}
-			}
-
-			if (i >= dev_info.sec_info.num_seeds) {
-				SS_ERR("%s: Fatal error: All keys are not match!\n", __func__);
-				goto out;
-			}
-
-			if (i != 0)
-				SS_ERR("%s: seed changed to %d.\n", __func__, i);
-			memcpy_s(g_rpmb_key, 32, rpmb_keys[i].byte, 32);
-			rc = 0;
-
-			break;
-
-		case ICL_PLATFORM:
-			rc = get_rpmb_auth_key(hwkey_session, (uint8_t *)&rpmb_keys, sizeof(rpmb_keys));
-			if (rc < 0) {
-				SS_ERR("%s: icl can't get storage auth key: (%d)\n", __func__, rc);
-				goto out;
-			}
-
-			state.mmc_handle = &chan_handle;
-			memcpy_s(&state.key, 32, rpmb_keys[0].byte, 32);
-
-			for (i = 0; i < 32; i++) {
-				SS_ERR("%s: icl rpmb_key:(%d)(0x%x)\n", __func__, i, rpmb_keys[0].byte[i]);
-			}
-
-			rc = rpmb_read_counter(&state, &write_counter, &result);
-			if (rc != 0) {
-				SS_ERR("%s: icl rpmb_read_counter unexpected error: %d.\n", __func__, result);
-				goto out;
-			}
-
-			memcpy_s(g_rpmb_key, 32, rpmb_keys[0].byte, 32);
-			rc = 0;
-
-			break;
-
-		default:
-			//TODO: CWP rpmb key.
-			SS_ERR("%s: platform(%d) is not handled!\n", __func__, dev_info.sec_info.platform);
-			assert(0);
-			break;
+	rc = get_rpmb_auth_key(hwkey_session, (uint8_t *)&rpmb_keys, sizeof(rpmb_keys));
+	if (rc < 0) {
+		SS_ERR("%s: can't get storage auth key: (%d)\n", __func__, rc);
+		goto out;
 	}
+
+	state.mmc_handle = &chan_handle;
+	for (i = 0; i < dev_info.sec_info.num_seeds; i++) {
+		memcpy_s(&state.key, 32, rpmb_keys[i].byte, 32);
+		rc = rpmb_read_counter(&state, &write_counter, &result);
+		if (rc == 0)
+			break;
+		if (result == RPMB_RES_NO_AUTH_KEY) {
+			SS_ERR("%s: key is not programmed.\n", __func__);
+			goto out;
+		}
+		if (result != RPMB_RES_AUTH_FAILURE) {
+			SS_ERR("%s: rpmb_read_counter unexpected error: %d.\n", __func__, result);
+			goto out;
+		}
+	}
+
+	if (i >= dev_info.sec_info.num_seeds) {
+		SS_ERR("%s: Fatal error: All keys are not match!\n", __func__);
+		goto out;
+	}
+
+	if (i != 0)
+		SS_WARN("%s: seed changed to %d.\n", __func__, i);
+	memcpy_s(g_rpmb_key, 32, rpmb_keys[i].byte, 32);
+	rc = 0;
 
 out:
 	secure_memzero(rpmb_keys, sizeof(rpmb_keys));
@@ -205,7 +170,7 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 
 	state.mmc_handle = &chan_handle;
 
-	SS_ERR("init_connection is %d.\n", init_connection);
+	SS_WARN("init_connection is %d.\n", init_connection);
 
 	if (init_connection) {
 		init_connection = false;
@@ -226,7 +191,7 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 		}
 
 		if (crypto_ctx.magic != CRYPTO_CONTEXT_MAGIC_DATA) {
-			SS_ERR("%s: CRYPTO CONTEXT ARE NOT EXISTED.\n", __func__);
+			SS_WARN("%s: CRYPTO CONTEXT ARE NOT EXISTED.\n", __func__);
 			if (hwkey_generate_crypto_context(hwkey_session, (uint8_t *)&crypto_ctx, sizeof(crypto_ctx))) {
 				SS_ERR("%s: hwkey_generate_crypto_context failed.\n", __func__);
 				goto err_init_connection;
@@ -243,14 +208,14 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 			}
 		}
 		else {
-			SS_ERR("%s: CRYPTO CONTEXT ARE EXISTED.\n", __func__);
+			SS_WARN("%s: CRYPTO CONTEXT ARE EXISTED.\n", __func__);
 			if (hwkey_exchange_crypto_context(hwkey_session, (const uint8_t *)&crypto_ctx,
 						 (uint8_t *)&updated_crypto_ctx, sizeof(struct crypto_context))) {
 				SS_ERR("%s: hwkey_transfer_enc_seeds failed.\n", __func__);
 				goto err_init_connection;
 			}
 			if (CRYPTO_memcmp(&crypto_ctx, &updated_crypto_ctx, sizeof(struct crypto_context))) {
-				SS_ERR("%s: SEED CHANGED!!! Rewrite to rpmb.\n", __func__);
+				SS_WARN("%s: SEED CHANGED!!! Rewrite to rpmb.\n", __func__);
 				if (memcpy_s(buf, sizeof(buf), &updated_crypto_ctx, sizeof(struct crypto_context))) {
 					SS_ERR("%s: failed to copy updated_crypto_ctx to buf.\n", __func__);
 					goto err_init_connection;
