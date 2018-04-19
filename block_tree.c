@@ -2097,7 +2097,7 @@ static int block_tree_sibling_index(int index)
 static struct block_mac block_tree_get_sibling_block(struct transaction *tr,
                                                      struct block_tree_path *path)
 {
-    struct block_mac block_mac;
+    struct block_mac block_mac = BLOCK_MAC_INITIAL_VALUE(block_mac);
     const struct block_mac *parent;
     const struct block_mac *block_mac_ptr;
     int parent_index;

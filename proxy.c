@@ -36,6 +36,8 @@
 #define SS_WARN(args...)  fprintf(stderr, "ss: " args)
 #define CRYPTO_CONTEXT_RPMB_ADDR	(1024)
 
+#define CRYPTO_CTX_INITIAL_VALUE(crypto_ctx) {0, {0}, {0}, {0}, {0}, 0, {0}}
+
 static bool init_connection = true;
 static uint8_t g_rpmb_key[32] = {0};
 static bool g_setup_flag = false;
@@ -148,8 +150,8 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 	struct rpmb_state state;
 	int rc;
 	uint8_t buf[256] = {0};
-	struct crypto_context crypto_ctx = {0};
-	struct crypto_context updated_crypto_ctx = {0};
+	struct crypto_context crypto_ctx = CRYPTO_CTX_INITIAL_VALUE(crypto_ctx);
+	struct crypto_context updated_crypto_ctx = CRYPTO_CTX_INITIAL_VALUE(updated_crypto_ctx);
 
 	struct storage_session *session = calloc(1, sizeof(*session));
 	if (session == NULL) {
