@@ -59,7 +59,7 @@ struct block_set {
 #define BLOCK_SET_INITIAL_VALUE(block_set) { \
     .node = LIST_INITIAL_CLEARED_VALUE, \
     .block_tree = BLOCK_TREE_INITIAL_VALUE(block_set.block_tree), \
-    .initial_range = {0}, \
+    .initial_range = BLOCK_RANGE_INITIAL_VALUE(block_set.initial_range), \
     .updating = 0, \
 }
 

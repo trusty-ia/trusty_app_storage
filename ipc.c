@@ -278,7 +278,7 @@ static int await_response(handle_t session, struct ipc_msg_info *inf)
 static int wait_to_send(handle_t session, struct ipc_msg *msg)
 {
 	int rc;
-	struct uevent ev = {0};
+	struct uevent ev = {0, 0, 0};
 
 	rc = wait(session, &ev, -1);
 	if (rc < 0) {
