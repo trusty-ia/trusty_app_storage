@@ -29,8 +29,6 @@
 
 #define SS_ERR(args...)  fprintf(stderr, "ss: " args)
 
-static bool init_connection = true;
-
 static void proxy_disconnect(struct ipc_channel_context *ctx);
 
 static struct storage_session *proxy_context_to_session(struct ipc_channel_context *context)
@@ -105,12 +103,6 @@ struct ipc_channel_context *proxy_connect(struct ipc_port_context *parent_ctx,
 	}
 
 	hwkey_session_t hwkey_session = (hwkey_session_t) rc;
-
-	/* TODO: Meet the key migration logic in kernelflinger. */
-	if (init_connection) {
-		init_connection = false;
-		goto err_get_storage_key;
-	}
 
 	/* Generate encryption key */
 	rc = get_storage_encryption_key(hwkey_session, session->key.byte,
