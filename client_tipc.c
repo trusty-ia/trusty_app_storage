@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include "client_tipc.h"
+
 #include <assert.h>
 #include <errno.h>
 #include <uapi/err.h>
@@ -28,7 +30,6 @@
 
 #include <interface/storage/storage.h>
 
-#include "client_tipc.h"
 #include "client_session_tipc.h"
 #include "file.h"
 #include "ipc.h"

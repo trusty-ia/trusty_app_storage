@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include "block_device_tipc.h"
+
 #include <errno.h>
 #include <lk/compiler.h>
 #include <stdint.h>
@@ -23,7 +25,6 @@
 
 #include <interface/storage/storage.h>
 
-#include "block_device_tipc.h"
 #include "block_cache.h"
 #include "client_tipc.h"
 #include "ipc.h"
