@@ -48,7 +48,8 @@ int rpmb_init(struct rpmb_state **statep,
               const struct rpmb_key *key);
 void rpmb_uninit(struct rpmb_state *statep);
 int rpmb_read(struct rpmb_state *state, void *buf, uint16_t addr, uint16_t count);
-int rpmb_write(struct rpmb_state *state, const void *buf, uint16_t addr, uint16_t count, bool sync); /* count must be 1 or 2, addr must be aligned */
+/* count must be 1 or 2, addr must be aligned */
+int rpmb_write(struct rpmb_state *state, const void *buf, uint16_t addr, uint16_t count, bool sync);
 int rpmb_program_key(struct rpmb_state *state);
 int rpmb_read_counter(struct rpmb_state *state, uint32_t *write_counter, uint16_t *result);
 

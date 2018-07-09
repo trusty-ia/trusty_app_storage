@@ -22,7 +22,8 @@
 #include "crypt.h"
 #include "ipc.h"
 
-#define STORAGE_SESSION_MAGIC 0x53535343 // SSSC (Secure Storage Session Context)
+/* SSSC (Secure Storage Session Context) */
+#define STORAGE_SESSION_MAGIC 0x53535343
 
 /**
  * storage_proxy_session

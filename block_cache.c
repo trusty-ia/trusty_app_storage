@@ -172,7 +172,8 @@ void block_cache_complete_read(struct block_device *dev,
     }
     assert(!failed);
     entry->block_size = data_size;
-    memcpy(entry->data, data, data_size); /* TODO: change decrypt function to take separate in/out buffers */
+    /* TODO: change decrypt function to take separate in/out buffers */
+    memcpy(entry->data, data, data_size);
 
     stats_timer_start(STATS_FS_READ_BLOCK_CALC_MAC);
     ret = calculate_mac(entry->key, &entry->mac, entry->data, entry->block_size);
@@ -1028,7 +1029,8 @@ static void block_put_dirty_etc(struct transaction *tr,
     }
 
     block_put(data, data_ref);
-    assert(entry->encrypted || !tr); /* TODO: fix clients to support lazy write */
+    /* TODO: fix clients to support lazy write */
+    assert(entry->encrypted || !tr);
     assert(!entry->dirty_mac);
     if (block_mac) {
         assert(block_mac_to_block(tr, block_mac) == entry->block);

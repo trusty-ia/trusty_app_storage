@@ -399,7 +399,8 @@ int fs_init(struct fs *fs,
     if (dev == super_dev) {
         fs->min_block_num = 2;
     } else {
-        fs->min_block_num = 1; /* TODO: use 0 when btree code allows it */;
+        /* TODO: use 0 when btree code allows it */
+        fs->min_block_num = 1;
     }
     fs->super_block[0] = 0;
     fs->super_block[1] = 1;

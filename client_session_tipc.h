@@ -21,7 +21,8 @@
 #include "ipc.h"
 #include "transaction.h"
 
-#define STORAGE_CLIENT_SESSION_MAGIC 0x53435343 // SCSC (Storage Client Session Context)
+/* SCSC (Storage Client Session Context) */
+#define STORAGE_CLIENT_SESSION_MAGIC 0x53435343
 
 struct file_handle;
 
