@@ -44,6 +44,7 @@ MODULE_DEPS := \
 	lib/libc-trusty \
 	lib/boringssl \
 	lib/hwkey_migration \
+	lib/hwkey_crypt \
 	lib/trusty_syscall_x86
 
 MODULE_DEPS += \

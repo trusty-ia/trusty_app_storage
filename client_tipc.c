@@ -35,6 +35,9 @@
 #include "ipc.h"
 #include "session.h"
 #include "tipc_limits.h"
+#include "att_keybox.h"
+#include "rpmb.h"
+#include "trusty_key_crypt.h"
 
 /* macros to help manage debug output */
 #define SS_ERR(args...)		fprintf(stderr, "ss: " args)
@@ -45,6 +48,14 @@
 #define SS_INFO(args...)	fprintf(stderr, "ss: " args)
 #else
 #define SS_INFO(args...) do {} while(0)
+#endif
+
+#define RPMB_BLOCK_SIZE  256
+#define ATTKB_PRESENCE (1 << 0)
+#define ATTKB_MAX_SIZE (16 * 1024)
+
+#ifndef RETRIEVE_ATTKB_FROM_RAW_RPMB
+#define RPMB_BLOCK_INFO_INDEX  1
 #endif
 
 static int client_handle_msg(struct ipc_channel_context *ctx, void *msg, size_t msg_size);
@@ -1067,6 +1078,119 @@ static struct storage_client_session *chan_context_to_client_session(struct ipc_
 	return session;
 }
 
+static rpmb_block_t *get_attkb_header_block(void)
+{
+	int ret;
+	rpmb_block_t *rpmb_blk;
+
+	rpmb_blk = (rpmb_block_t *)malloc(RPMB_BLOCK_SIZE);
+	if (!rpmb_blk) {
+		SS_ERR("%s: rpmb_blk malloc fail!\n", __func__);
+		return NULL;
+	}
+
+	ret = rpmb_read(g_rpmb_state, (void *)rpmb_blk, RPMB_BLOCK_INFO_INDEX, 1);
+	if (ret) {
+		SS_ERR("%s: read rpmb block table fail!\n", __func__);
+		free(rpmb_blk);
+		return NULL;
+	}
+
+	if (strncmp((const char *)rpmb_blk->signature, "BARA", 4)) {
+		SS_ERR("%s: Invalid signature!\n", __func__);
+		free(rpmb_blk);
+		return NULL;
+	}
+
+	if (!(rpmb_blk->flag & ATTKB_PRESENCE)) {
+		SS_ERR("%s: Attkb is not presence!\n", __func__);
+		free(rpmb_blk);
+		return NULL;
+	}
+
+	if (rpmb_blk->attkb_size == 0 || rpmb_blk->attkb_size > ATTKB_MAX_SIZE) {
+		SS_ERR("%s: Attkeybox size is 0 or exceed max size(%d)!\n", __func__, ATTKB_MAX_SIZE);
+		free(rpmb_blk);
+		return NULL;
+	}
+
+	return rpmb_blk;
+}
+
+static enum storage_err storage_get_attkb_size(struct storage_msg *msg,
+                                              struct storage_client_session *session)
+{
+	enum storage_err result = STORAGE_NO_ERROR;
+	rpmb_block_t *rpmb_blk;
+
+	rpmb_blk = get_attkb_header_block();
+	if (!rpmb_blk) {
+		SS_ERR("%s: get rpmb block table fail!\n", __func__);
+		result = STORAGE_ERR_GENERIC;
+		return send_response(session, result, msg, 0, 0);
+	}
+
+	result = send_response(session, result, msg, (void *)&rpmb_blk->attkb_size, sizeof(int32_t));
+
+	free(rpmb_blk);
+
+	return result;
+}
+
+static enum storage_err storage_read_att_keybox(struct storage_msg *msg,
+                                              struct storage_client_session *session)
+{
+	uint32_t i, blk_num;
+	int ret;
+	uint32_t read_size = RPMB_BLOCK_SIZE;
+	enum storage_err result = STORAGE_NO_ERROR;
+	rpmb_block_t *rpmb_blk;
+	uint8_t *kb_buf;
+	uint32_t kb_buf_size;
+
+	rpmb_blk = get_attkb_header_block();
+	if (!rpmb_blk) {
+		SS_ERR("%s: get rpmb block table fail!\n", __func__);
+		return STORAGE_ERR_GENERIC;
+	}
+
+	blk_num = (rpmb_blk->attkb_size - 1) / RPMB_BLOCK_SIZE + 1;
+
+	kb_buf_size = blk_num * RPMB_BLOCK_SIZE;
+	kb_buf = (uint8_t *)malloc(kb_buf_size);
+	if (!kb_buf) {
+		SS_ERR("%s: kb_buf malloc fail!\n", __func__);
+		free(rpmb_blk);
+		return STORAGE_ERR_GENERIC;
+	}
+	memset(kb_buf, 0, kb_buf_size);
+
+	for (i = 0; i < blk_num; i++) {
+		if ((i == blk_num - 1) && (rpmb_blk->attkb_size % RPMB_BLOCK_SIZE))
+			read_size = rpmb_blk->attkb_size % RPMB_BLOCK_SIZE;
+
+		ret = rpmb_read(g_rpmb_state, kb_buf + i * RPMB_BLOCK_SIZE, rpmb_blk->attkb_addr + i, 1);
+		if (ret) {
+			SS_ERR("%s: read rpmb block table fail!\n", __func__);
+			result = STORAGE_ERR_TRANSACT;
+			break;
+		}
+
+		result = send_response(session, result, msg, kb_buf + i * RPMB_BLOCK_SIZE, read_size);
+		if (result < 0) {
+			SS_ERR("%s: result = %d\n", __func__, result);
+			break;
+		}
+		result = STORAGE_NO_ERROR;
+	}
+
+	secure_memzero(kb_buf, kb_buf_size);
+	free(kb_buf);
+	free(rpmb_blk);
+
+	return result;
+}
+
 static struct client_port_context *port_context_to_client_port_context(struct ipc_port_context *context)
 {
 	assert(context != NULL);
@@ -1164,6 +1288,14 @@ static int send_result(struct storage_client_session *session,
 	return send_response(session, result, msg, NULL, 0);
 }
 
+static int is_keymaster_ta(uuid_t *uuid)
+{
+	/* same as the KM uuid defined in trusty/app/keymaster/manifest.c */
+	uuid_t keymaster_uuid = {0x5f902ace, 0x5e5c, 0x4cd8,
+				{0xae, 0x54, 0x87, 0xb8, 0x8c, 0x22, 0xdd, 0xaf}};
+	return memcmp(uuid, &keymaster_uuid, sizeof(uuid_t)) == 0;
+}
+
 static int client_handle_msg(struct ipc_channel_context *ctx, void *msg_buf, size_t msg_size)
 {
 	struct storage_client_session *session;
@@ -1246,6 +1378,16 @@ static int client_handle_msg(struct ipc_channel_context *ctx, void *msg_buf, siz
 	case STORAGE_FILE_SET_SIZE:
 		result = storage_file_set_size(msg, payload, payload_len, session);
 		break;
+	case STORAGE_GET_ATTKB_SIZE:
+		if (is_keymaster_ta(&session->uuid))
+			return storage_get_attkb_size(msg, session);
+		SS_ERR("%s: illegal command request 0x%x\n", __func__, msg->cmd);
+		return send_result(session, msg, STORAGE_ERR_ACCESS);
+	case STORAGE_READ_ATTKB:
+		if (is_keymaster_ta(&session->uuid))
+			return storage_read_att_keybox(msg, session);
+		SS_ERR("%s: illegal command request 0x%x\n", __func__, msg->cmd);
+		return send_result(session, msg, STORAGE_ERR_ACCESS);
 	default:
 		SS_ERR("%s: unsupported command 0x%x\n", __func__, msg->cmd);
 		result = STORAGE_ERR_UNIMPLEMENTED;
