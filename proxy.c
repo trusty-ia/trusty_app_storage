@@ -25,6 +25,7 @@
 #include <openssl/mem.h>
 
 #include "trusty_key_migration.h"
+#include "trusty_key_crypt.h"
 #include "ipc.h"
 #include "rpmb.h"
 #include "session.h"

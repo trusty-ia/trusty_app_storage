@@ -30,6 +30,7 @@
 #include "ipc.h"
 #include "tipc_ns.h"
 #include "rpmb.h"
+#include "att_keybox.h"
 
 #ifdef APP_STORAGE_RPMB_BLOCK_SIZE
 #define BLOCK_SIZE_RPMB (APP_STORAGE_RPMB_BLOCK_SIZE)
@@ -76,6 +77,8 @@ STATIC_ASSERT(BLOCK_SIZE_MAIN >= BLOCK_SIZE_RPMB);
 #define SS_ERR(args...)   do { } while (0)
 #endif
 #define SS_DBG_IO(args...)  do {} while(0)
+
+struct rpmb_state *g_rpmb_state;
 
 static int rpmb_check(struct block_device_tipc *state, uint16_t block)
 {
@@ -268,6 +271,8 @@ int block_device_tipc_init(struct block_device_tipc *state,
         rpmb_block_count = rpmb_search_size(state, 0); /* TODO: get hint from ns */
         rpmb_block_count /= BLOCK_SIZE_RPMB_BLOCKS;
     }
+
+    g_rpmb_state = state->rpmb_state;
 
     SS_WARN("rpmb_block_count is %d.\n", rpmb_block_count);
 
