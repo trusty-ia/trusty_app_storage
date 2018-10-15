@@ -51,6 +51,11 @@
 #else
 #define BLOCK_COUNT_MAIN (0x10000000000 / BLOCK_SIZE_MAIN)
 #endif
+#ifdef APP_STORAGE_RPMB_OFFSET
+#define TRUSTY_RPMB_OFFSET (APP_STORAGE_RPMB_OFFSET)
+#else
+#define TRUSTY_RPMB_OFFSET (512)
+#endif
 
 #define BLOCK_SIZE_RPMB_BLOCKS (BLOCK_SIZE_RPMB / RPMB_BUF_SIZE)
 
@@ -237,10 +242,10 @@ int block_device_tipc_init(struct block_device_tipc *state,
     uint8_t dummy;
     uint32_t rpmb_block_count;
     uint32_t rpmb_part1_block_count = 2;
-    /* block 512 is reserved for key migration.
-     * block 0~511(256KB) are reserved for M and O alignment.
+    /* block TRUSTY_RPMB_OFFSET is reserved for key migration.
+     * block 0~TRUSTY_RPMB_OFFSET-1 are reserved for M and O alignment.
      */
-    uint16_t rpmb_part1_base = 512 + 1;
+    uint16_t rpmb_part1_base = TRUSTY_RPMB_OFFSET + 1;
     uint16_t rpmb_part2_base = rpmb_part1_base + rpmb_part1_block_count;
 
     state->ipc_handle = ipc_handle;
