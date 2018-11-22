@@ -40,7 +40,11 @@
 #define SS_WARN(args...)  do { } while (0)
 #endif
 
-#define CRYPTO_CONTEXT_RPMB_ADDR	(1024)
+#ifdef APP_STORAGE_RPMB_OFFSET
+#define CRYPTO_CONTEXT_RPMB_ADDR (2 * APP_STORAGE_RPMB_OFFSET)
+#else
+#define CRYPTO_CONTEXT_RPMB_ADDR (1024)
+#endif
 
 #define CRYPTO_CTX_INITIAL_VALUE(crypto_ctx) {0, {0}, {0}, {0}, {0}, 0, {0}}
 
