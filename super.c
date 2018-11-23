@@ -151,7 +151,7 @@ static bool super_block_valid(const struct block_device *dev,
                               const struct super_block *super)
 {
     if (super->magic != SUPER_BLOCK_MAGIC) {
-        pr_init("bad magic, 0x%llx\n", (unsigned long long)super->magic);
+        //pr_init("bad magic, 0x%llx\n", (unsigned long long)super->magic);
         return false;
     }
     if (super->flags != super->flags2) {
